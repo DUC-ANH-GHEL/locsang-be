@@ -1,0 +1,21 @@
+{
+  "version": 2,
+  "builds": [
+    {
+      "src": "app/main.py",
+      "use": "@vercel/python",
+      "config": {
+        "includeFiles": "app/**"
+      }
+    }
+  ],
+  "routes": [
+    {"src": "/(.*)", "dest": "app/main.py"}
+  ],
+  "crons": [
+    {
+      "path": "/api/admin/products/sync/pancake/auto",
+      "schedule": "0 2 * * *"
+    }
+  ]
+}
