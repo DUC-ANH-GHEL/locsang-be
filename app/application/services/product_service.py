@@ -5,18 +5,19 @@ import cloudinary.uploader
 from fastapi import UploadFile
 from sqlalchemy.exc import IntegrityError
 
-from app.domain.models.product import Product, ProductImage, ProductVariant
-from app.infrastructure.repositories.product_repository import ProductRepository
-from app.application.services.base import BaseServiceImpl
 from app.application.dto.product import (
     ProductCreate,
-    ProductUpdate,
     ProductImageCreate,
-    ProductImageUpdate,
     ProductImageResponse,
+    ProductImageUpdate,
+    ProductUpdate,
     ProductVariantCreate,
 )
-from app.core.exceptions import ValidationException, NotFoundException
+from app.application.services.base import BaseServiceImpl
+from app.core.exceptions import NotFoundException, ValidationException
+from app.domain.models.product import Product, ProductImage, ProductVariant
+from app.infrastructure.repositories.product_repository import ProductRepository
+
 
 class ProductService(BaseServiceImpl[Product, ProductCreate, ProductUpdate]):
     """Product service implementation"""
@@ -32,7 +33,6 @@ class ProductService(BaseServiceImpl[Product, ProductCreate, ProductUpdate]):
         variants: Optional[List[ProductVariantCreate]] = None,
     ) -> Product:
         """Create new product"""
-        # Check if SKU already exists
         existing_product = await self.repository.get_by_sku(product_in.sku)
         if existing_product:
             raise ValidationException(f"Product with SKU {product_in.sku} already exists")
@@ -70,23 +70,16 @@ class ProductService(BaseServiceImpl[Product, ProductCreate, ProductUpdate]):
             if existing_variant_skus:
                 raise ValidationException(f"Variant SKU already exists: {existing_variant_skus[0]}")
 
-            # When variants exist, keep product.stock as total for convenience
             product_in = product_in.model_copy(update={"stock": total_stock})
 
-        # Create product
         product = Product(**product_in.model_dump())
-        try:
-            product = await self.repository.create(product)
-        except IntegrityError as exc:
-            message = str(getattr(exc, "orig", exc)).lower()
-            if "products_slug" in message or "ix_products_slug" in message or "slug" in message:
-                raise ValidationException("Slug sản phẩm đã tồn tại. Vui lòng thử lại với tên khác.")
-            if "products_sku" in message or "ix_products_sku" in message or "sku" in message:
-                raise ValidationException("SKU sản phẩm đã tồn tại. Vui lòng nhập SKU khác.")
-            raise ValidationException("Dữ liệu sản phẩm bị trùng. Vui lòng kiểm tra lại.")
+        uploaded_public_ids: list[str] = []
 
-        # Create variants if any
-        if variants:
+        try:
+            await self.repository.session.rollback()
+            self.repository.session.add(product)
+            await self.repository.session.flush()
+
             for v in variants:
                 variant = ProductVariant(
                     product_id=product.id,
@@ -99,39 +92,64 @@ class ProductService(BaseServiceImpl[Product, ProductCreate, ProductUpdate]):
                     stock=v.stock,
                     is_active=v.is_active,
                 )
-                await self.repository.add_variant(variant)
+                self.repository.session.add(variant)
 
-        # Upload images if any
-        if images:
-            cfg = cloudinary.config()
-            if not getattr(cfg, "api_key", None) or not getattr(cfg, "cloud_name", None):
-                raise ValidationException(
-                    "Cloudinary is not configured. Set CLOUDINARY_URL or CLOUDINARY_CLOUD_NAME/CLOUDINARY_API_KEY/CLOUDINARY_API_SECRET."
-                )
-            for idx, image_file in enumerate(images):
-                try:
-                    # Upload to Cloudinary
+            if images:
+                cfg = cloudinary.config()
+                if not getattr(cfg, "api_key", None) or not getattr(cfg, "cloud_name", None):
+                    raise ValidationException(
+                        "Cloudinary is not configured. Set CLOUDINARY_URL or CLOUDINARY_CLOUD_NAME/CLOUDINARY_API_KEY/CLOUDINARY_API_SECRET."
+                    )
+                for idx, image_file in enumerate(images):
                     result = cloudinary.uploader.upload(
                         image_file.file,
                         folder="products",
-                        resource_type="auto"
+                        resource_type="auto",
                     )
+                    url = result.get("secure_url")
+                    public_id = result.get("public_id")
+                    if not url or not public_id:
+                        raise ValidationException("Cloudinary did not return image URL.")
+                    uploaded_public_ids.append(public_id)
 
-                    # Create product image
                     image = ProductImage(
                         product_id=product.id,
-                        url=result['secure_url'],
-                        public_id=result['public_id'],
+                        url=url,
+                        public_id=public_id,
                         is_primary=(idx == 0),
                         sort_order=idx,
                     )
-                    await self.repository.add_product_image(image)
-                except Exception as e:
-                    raise ValidationException(f"Error uploading image: {str(e)}")
+                    self.repository.session.add(image)
 
-        # Ensure relationships (images/variants) are loaded for response serialization
+            await self.repository.session.commit()
+            await self.repository.session.refresh(product)
+        except IntegrityError as exc:
+            await self.repository.session.rollback()
+            self._cleanup_uploaded_images(uploaded_public_ids)
+            message = str(getattr(exc, "orig", exc)).lower()
+            if "products_slug" in message or "ix_products_slug" in message or "slug" in message:
+                raise ValidationException("Slug sản phẩm đã tồn tại. Vui lòng thử lại với tên khác.")
+            if "products_sku" in message or "ix_products_sku" in message or "sku" in message:
+                raise ValidationException("SKU sản phẩm đã tồn tại. Vui lòng nhập SKU khác.")
+            raise ValidationException("Dữ liệu sản phẩm bị trùng. Vui lòng kiểm tra lại.")
+        except ValidationException:
+            await self.repository.session.rollback()
+            self._cleanup_uploaded_images(uploaded_public_ids)
+            raise
+        except Exception as exc:
+            await self.repository.session.rollback()
+            self._cleanup_uploaded_images(uploaded_public_ids)
+            raise ValidationException(f"Error creating product: {str(exc)}")
+
         reloaded = await self.repository.get_by_id(product.id)
         return reloaded or product
+
+    def _cleanup_uploaded_images(self, public_ids: list[str]) -> None:
+        for public_id in public_ids:
+            try:
+                cloudinary.uploader.destroy(public_id, resource_type="image", invalidate=True)
+            except Exception:
+                pass
 
     async def get_by_id(self, product_id: int) -> Optional[Product]:
         """Get product by ID"""
@@ -158,7 +176,6 @@ class ProductService(BaseServiceImpl[Product, ProductCreate, ProductUpdate]):
         if not product:
             raise NotFoundException(f"Product with ID {product_id} not found")
 
-        # Update product
         updated_product = await self.repository.update(product_id, product_in)
         return updated_product
 
@@ -207,10 +224,9 @@ class ProductService(BaseServiceImpl[Product, ProductCreate, ProductUpdate]):
                 stock=dto.stock,
                 sku=dto.sku,
                 is_active=dto.is_active,
-                category_id=dto.category_id
+                category_id=dto.category_id,
             )
-        else:
-            return Product(**dto.dict(exclude_unset=True))
+        return Product(**dto.dict(exclude_unset=True))
 
     async def search_products(self, search_term: str) -> List[Product]:
         """Search products by name or description"""
