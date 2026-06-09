@@ -108,6 +108,34 @@ class ProductRepository:
         )
         return result.scalar_one_or_none()
 
+    async def get_by_slug(self, slug: str) -> Optional[Product]:
+        """Get product by slug."""
+        result = await self.session.execute(select(Product).where(Product.slug == slug))
+        return result.scalar_one_or_none()
+
+    async def make_unique_slug(self, slug: str) -> str:
+        """Return slug or slug-N if the requested slug already exists."""
+        base = (slug or "san-pham").strip().strip("-") or "san-pham"
+        candidate = base
+        suffix = 2
+
+        while await self.get_by_slug(candidate):
+            candidate = f"{base}-{suffix}"
+            suffix += 1
+
+        return candidate
+
+    async def get_variant_skus_in_use(self, skus: List[str]) -> List[str]:
+        """Return existing variant SKUs from the provided list."""
+        cleaned = [sku for sku in skus if sku]
+        if not cleaned:
+            return []
+
+        result = await self.session.execute(
+            select(ProductVariant.sku).where(ProductVariant.sku.in_(cleaned))
+        )
+        return list(set(result.scalars().all()))
+
     async def get_active_products(self) -> List[Product]:
         """Get all active products"""
         result = await self.session.execute(

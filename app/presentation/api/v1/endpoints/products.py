@@ -1,5 +1,6 @@
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, status, Query, Form, File, UploadFile
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 import json
 
@@ -98,6 +99,11 @@ async def create_product(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(e)
         )
+    except IntegrityError:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Slug hoặc SKU sản phẩm đã tồn tại. Vui lòng nhập giá trị khác.",
+        )
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -171,6 +177,11 @@ async def update_product(
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(e)
+        )
+    except IntegrityError:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Slug hoặc SKU sản phẩm đã tồn tại. Vui lòng nhập giá trị khác.",
         )
 
 @router.delete("/{product_id}", status_code=status.HTTP_204_NO_CONTENT)

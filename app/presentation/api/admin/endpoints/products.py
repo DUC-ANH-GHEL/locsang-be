@@ -6,6 +6,7 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import Select, case, delete, func, select, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -789,6 +790,13 @@ async def admin_create_product(
         raise
     except AdminAPIError:
         raise
+    except IntegrityError:
+        await db.rollback()
+        _admin_error(
+            error_code="PRODUCT_DUPLICATE",
+            message="Slug hoặc SKU sản phẩm đã tồn tại. Vui lòng nhập giá trị khác.",
+            status_code=status.HTTP_409_CONFLICT,
+        )
     except Exception as e:
         _admin_error(error_code="INTERNAL_ERROR", message=str(e), status_code=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
@@ -985,6 +993,13 @@ async def admin_update_product(
     except AdminAPIError:
         await db.rollback()
         raise
+    except IntegrityError:
+        await db.rollback()
+        _admin_error(
+            error_code="PRODUCT_DUPLICATE",
+            message="Slug hoặc SKU sản phẩm đã tồn tại. Vui lòng nhập giá trị khác.",
+            status_code=status.HTTP_409_CONFLICT,
+        )
     except Exception as e:
         await db.rollback()
         _admin_error(error_code="INTERNAL_ERROR", message=str(e), status_code=status.HTTP_500_INTERNAL_SERVER_ERROR)

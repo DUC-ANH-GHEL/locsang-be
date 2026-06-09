@@ -3,6 +3,7 @@ from typing import List, Optional
 import cloudinary
 import cloudinary.uploader
 from fastapi import UploadFile
+from sqlalchemy.exc import IntegrityError
 
 from app.domain.models.product import Product, ProductImage, ProductVariant
 from app.infrastructure.repositories.product_repository import ProductRepository
@@ -36,6 +37,10 @@ class ProductService(BaseServiceImpl[Product, ProductCreate, ProductUpdate]):
         if existing_product:
             raise ValidationException(f"Product with SKU {product_in.sku} already exists")
 
+        unique_slug = await self.repository.make_unique_slug(product_in.slug)
+        if unique_slug != product_in.slug:
+            product_in = product_in.model_copy(update={"slug": unique_slug})
+
         if product_in.sale_price is not None and product_in.sale_price > product_in.price:
             raise ValidationException("sale_price must be <= price")
 
@@ -61,12 +66,24 @@ class ProductService(BaseServiceImpl[Product, ProductCreate, ProductUpdate]):
                     raise ValidationException(f"variant.stock must be >= 0 for sku {v.sku}")
                 total_stock += v.stock
 
+            existing_variant_skus = await self.repository.get_variant_skus_in_use(list(seen))
+            if existing_variant_skus:
+                raise ValidationException(f"Variant SKU already exists: {existing_variant_skus[0]}")
+
             # When variants exist, keep product.stock as total for convenience
             product_in = product_in.model_copy(update={"stock": total_stock})
 
         # Create product
         product = Product(**product_in.model_dump())
-        product = await self.repository.create(product)
+        try:
+            product = await self.repository.create(product)
+        except IntegrityError as exc:
+            message = str(getattr(exc, "orig", exc)).lower()
+            if "products_slug" in message or "ix_products_slug" in message or "slug" in message:
+                raise ValidationException("Slug sản phẩm đã tồn tại. Vui lòng thử lại với tên khác.")
+            if "products_sku" in message or "ix_products_sku" in message or "sku" in message:
+                raise ValidationException("SKU sản phẩm đã tồn tại. Vui lòng nhập SKU khác.")
+            raise ValidationException("Dữ liệu sản phẩm bị trùng. Vui lòng kiểm tra lại.")
 
         # Create variants if any
         if variants:
