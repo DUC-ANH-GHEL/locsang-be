@@ -58,6 +58,21 @@ Notes:
 - If `ORDER_NOTIFICATION_TO_EMAIL` is empty, backend falls back to `CONTACT_NOTIFICATION_TO_EMAIL`, then SMTP sender email.
 - SMTP errors do not fail checkout API response.
 
+## Admin new-order push notifications
+
+When creating order via `POST /api/orders`, backend can also send Web Push notifications to admin browsers and installed PWA apps that have enabled notifications in the admin header.
+
+Set these environment variables to enable Web Push:
+
+- `WEB_PUSH_VAPID_PUBLIC_KEY=<vapid_public_key>`
+- `WEB_PUSH_VAPID_PRIVATE_KEY=<vapid_private_key>`
+- `WEB_PUSH_VAPID_SUBJECT=mailto:admin@locsang.cgnn.vn`
+
+Notes:
+
+- Without VAPID keys, the admin notification button will show that push is not configured.
+- Push delivery runs in a background task and does not fail checkout if a notification provider rejects an expired subscription.
+
 ## Local catalog and orders
 
 Lộc Sang manages products, categories, inventory, images, prices, and orders directly in this backend.

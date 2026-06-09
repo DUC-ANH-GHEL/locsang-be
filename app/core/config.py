@@ -69,6 +69,12 @@ class Settings(BaseSettings):
     ORDER_NOTIFICATION_TO_EMAIL: Optional[str] = None
     ORDER_SEND_AUTO_REPLY: bool = True
 
+    # Web Push notifications for new admin orders.
+    # Generate VAPID keys with pywebpush/py-vapid and set these in deployment env.
+    WEB_PUSH_VAPID_PUBLIC_KEY: Optional[str] = None
+    WEB_PUSH_VAPID_PRIVATE_KEY: Optional[str] = None
+    WEB_PUSH_VAPID_SUBJECT: str = "mailto:admin@locsang.cgnn.vn"
+
 settings = Settings()
 
 # Configure Cloudinary

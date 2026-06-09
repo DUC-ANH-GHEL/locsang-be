@@ -23,6 +23,7 @@ from app.domain.models.home_content import HomeContent
 from app.domain.models.customer_story import CustomerStory
 from app.domain.models.tip_post import TipPost
 from app.domain.models.tip_category import TipCategory
+from app.domain.models.admin_push_subscription import AdminPushSubscription
 
 from alembic import context
 
