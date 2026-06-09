@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel, Field
+from sqlalchemy import func, select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.application.services.admin_push_notification_service import (
     deactivate_admin_push_subscription,
@@ -10,6 +12,8 @@ from app.application.services.admin_push_notification_service import (
     upsert_admin_push_subscription,
 )
 from app.core.deps import get_current_user
+from app.core.database import get_db
+from app.domain.models.admin_notification import AdminNotification
 from app.domain.models.user import User
 
 
@@ -28,6 +32,77 @@ class PushSubscriptionBody(BaseModel):
 
 class PushUnsubscribeBody(BaseModel):
     endpoint: str = Field(..., min_length=10)
+
+
+def _notification_to_response(notification: AdminNotification) -> dict:
+    return {
+        "id": int(notification.id),
+        "type": notification.type,
+        "title": notification.title,
+        "body": notification.body,
+        "url": notification.url,
+        "order_id": notification.order_id,
+        "tracking_code": notification.tracking_code,
+        "read_at": notification.read_at.isoformat() if notification.read_at else None,
+        "created_at": notification.created_at.isoformat() if notification.created_at else None,
+    }
+
+
+@router.get("")
+async def list_admin_notifications(
+    limit: int = 20,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    safe_limit = min(50, max(1, int(limit or 20)))
+    stmt = (
+        select(AdminNotification)
+        .order_by(AdminNotification.created_at.desc(), AdminNotification.id.desc())
+        .limit(safe_limit)
+    )
+    notifications = (await db.execute(stmt)).scalars().all()
+    unread_count = int((await db.execute(select(func.count(AdminNotification.id)).where(AdminNotification.read_at.is_(None)))).scalar_one())
+    return {
+        "data": [_notification_to_response(notification) for notification in notifications],
+        "unread_count": unread_count,
+    }
+
+
+@router.patch("/{notification_id}/read")
+async def mark_admin_notification_read(
+    notification_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    notification = await db.get(AdminNotification, notification_id)
+    if notification is None:
+        return {"success": True, "updated": False}
+
+    if notification.read_at is None:
+        from datetime import datetime
+
+        notification.read_at = datetime.utcnow()
+        notification.updated_at = notification.read_at
+        await db.commit()
+
+    return {"success": True, "updated": True}
+
+
+@router.patch("/read-all")
+async def mark_all_admin_notifications_read(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    from datetime import datetime
+
+    now = datetime.utcnow()
+    stmt = select(AdminNotification).where(AdminNotification.read_at.is_(None))
+    notifications = (await db.execute(stmt)).scalars().all()
+    for notification in notifications:
+        notification.read_at = now
+        notification.updated_at = now
+    await db.commit()
+    return {"success": True, "updated": len(notifications)}
 
 
 @router.get("/push/config")

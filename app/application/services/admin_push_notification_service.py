@@ -9,6 +9,7 @@ from sqlalchemy import select
 
 from app.core.config import settings
 from app.core.database import async_session
+from app.domain.models.admin_notification import AdminNotification
 from app.domain.models.admin_push_subscription import AdminPushSubscription
 
 
@@ -138,3 +139,37 @@ async def send_new_order_push_notifications(
             status_code = getattr(getattr(exc, "response", None), "status_code", None)
             if status_code in {404, 410}:
                 await _mark_subscription_inactive(int(subscription.id))
+
+
+async def create_new_order_admin_notification(
+    *,
+    order_id: int,
+    tracking_code: str | None,
+    receiver_name: str | None,
+    total_amount: float | int | None,
+) -> None:
+    amount = int(float(total_amount or 0))
+    title = "Có đơn hàng mới"
+    body = f"{receiver_name or 'Khách hàng'} vừa đặt đơn {tracking_code or f'#{order_id}'} - {amount:,}đ".replace(",", ".")
+    url = f"/admin/orders?orderId={order_id}"
+
+    async with async_session() as db:
+        notification = AdminNotification(
+            type="order",
+            title=title,
+            body=body,
+            url=url,
+            order_id=order_id,
+            tracking_code=tracking_code,
+            created_at=datetime.utcnow(),
+            updated_at=datetime.utcnow(),
+        )
+        db.add(notification)
+        await db.commit()
+
+    await send_new_order_push_notifications(
+        order_id=order_id,
+        tracking_code=tracking_code,
+        receiver_name=receiver_name,
+        total_amount=total_amount,
+    )

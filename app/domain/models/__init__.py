@@ -13,6 +13,7 @@ from .home_content import HomeContent
 from .customer_story import CustomerStory
 from .tip_post import TipPost
 from .tip_category import TipCategory
+from .admin_notification import AdminNotification
 from .admin_push_subscription import AdminPushSubscription
 
 __all__ = [
@@ -33,5 +34,6 @@ __all__ = [
     "CustomerStory",
     "TipPost",
     "TipCategory",
+    "AdminNotification",
     "AdminPushSubscription",
 ]

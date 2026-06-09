@@ -22,7 +22,7 @@ from app.domain.models.order_item import OrderItem
 from app.domain.models.product import Product, ProductVariant
 from app.domain.models.user import User
 from app.presentation.api.public_api.deps import get_optional_account_user
-from app.application.services.admin_push_notification_service import send_new_order_push_notifications
+from app.application.services.admin_push_notification_service import create_new_order_admin_notification
 from app.services.email_service import send_order_email_flow
 
 
@@ -212,7 +212,7 @@ async def create_public_order(
             receiver_email=receiver_email,
         )
         background_tasks.add_task(
-            send_new_order_push_notifications,
+            create_new_order_admin_notification,
             order_id=int(created_order.id),
             tracking_code=str(created_order.tracking_code or ""),
             receiver_name=str(body.receiver_name or ""),
