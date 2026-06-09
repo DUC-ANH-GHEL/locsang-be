@@ -54,7 +54,6 @@ class ProductVariantItem(BaseModel):
 class ProductComboItem(BaseModel):
     label: str
     quantity: int = 1
-    pancake_product_id: Optional[str] = Field(default=None, alias="pancakeProductId")
     local_product_id: Optional[str] = Field(default=None, alias="localProductId")
     local_product_slug: Optional[str] = Field(default=None, alias="localProductSlug")
     image: Optional[str] = None
@@ -75,7 +74,6 @@ class ProductComboOffer(BaseModel):
 class ProductPromotionItem(BaseModel):
     label: str
     quantity: int = 1
-    pancake_product_id: Optional[str] = Field(default=None, alias="pancakeProductId")
     local_product_id: Optional[str] = Field(default=None, alias="localProductId")
     local_product_slug: Optional[str] = Field(default=None, alias="localProductSlug")
     image: Optional[str] = None

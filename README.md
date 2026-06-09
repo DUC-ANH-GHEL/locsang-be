@@ -1,6 +1,6 @@
-# LocSang API
+﻿# LocSang API
 
-This is a well-structured FastAPI backend project for Lộc Sang.
+This is a well-structured FastAPI backend project for Lá»™c Sang.
 
 ## Contact email notifications
 
@@ -19,7 +19,7 @@ Set these environment variables to enable SMTP sending:
 - `SMTP_USE_TLS=true` (common for port 587)
 - `SMTP_USE_SSL=false` (set `true` for providers using SSL, often port 465)
 - `SMTP_FROM_EMAIL=<from_email>` (optional, fallback to `SMTP_USERNAME`)
-- `SMTP_FROM_NAME=Lộc Sang` (optional)
+- `SMTP_FROM_NAME=Lá»™c Sang` (optional)
 - `CONTACT_NOTIFICATION_TO_EMAIL=<admin1@example.com,admin2@example.com>` (optional, comma-separated)
 - `CONTACT_SEND_AUTO_REPLY=true` (optional)
 
@@ -58,50 +58,13 @@ Notes:
 - If `ORDER_NOTIFICATION_TO_EMAIL` is empty, backend falls back to `CONTACT_NOTIFICATION_TO_EMAIL`, then SMTP sender email.
 - SMTP errors do not fail checkout API response.
 
-## Pancake POS order sync
+## Local catalog and orders
 
-When creating orders via `POST /api/orders`, the backend can also create the same order on Pancake POS.
-
-Set these environment variables:
-
-- `PANCAKE_ENABLED=true`
-- `PANCAKE_API_KEY=<your_api_key>`
-- `PANCAKE_SHOP_ID=<your_shop_id>`
-- `PANCAKE_BASE_URL=https://pos.pages.fm/api/v1` (optional)
-- `PANCAKE_SYNC_STRICT=false` (optional, when `true` local order creation fails if Pancake sync fails)
-- `PANCAKE_ORDER_MUST_SYNC=true` (recommended; when `true`, storefront checkout fails if Pancake order is not created)
-- `PANCAKE_ORDER_STATUS=0` (optional)
-- `PANCAKE_ORDER_STATUS_SYNC_STRICT=false` (optional; when `true`, admin status updates fail if Pancake status sync fails)
-- `PANCAKE_WEBHOOK_SECRET=<optional_secret>` (recommended when enabling webhook)
-- `PANCAKE_WEBHOOK_TOKEN=<optional_token>` (optional; if set, webhook must include `X-Webhook-Token`)
-
-Order sync behavior:
-
-- If a local order item uses a synced variant (`pancake_variation_id` available), backend sends direct `variation_id` to Pancake.
-- If not mapped, backend falls back to `one_time_product` item payload.
-- Admin order status updates attempt to sync status to Pancake when `orders.pancake_order_id` exists.
-- Pancake can sync status back to web through webhook endpoint: `POST /api/orders/pancake-webhook`.
-
-## Pancake product sync (Pancake -> Lộc Sang)
-
-Use admin endpoint to pull products from Pancake:
-
-- `POST /api/v1/admin/products/sync/pancake`
-- Query params: `max_pages` (default 10), `page_size` (default from env)
-
-Additional env:
-
-- `PANCAKE_PRODUCT_SYNC_PAGE_SIZE=100` (optional)
-- `PANCAKE_CATALOG_READ_ONLY=true` (recommended, default true): disable manual catalog CRUD and manage products only via Pancake sync.
+Lộc Sang manages products, categories, inventory, images, prices, and orders directly in this backend.
 
 Notes:
 
-- Sync stores direct linkage fields for reliable interoperability:
-	- `products.pancake_product_id`
-	- `product_variants.pancake_variation_id`
-	- `orders.pancake_order_id`
-	- `order_items.pancake_variation_id`
-- Raw source payload from Pancake is stored in:
-	- `products.pancake_payload`
-	- `product_variants.pancake_payload`
-	- `orders.pancake_payload`
+- Admin creates and edits catalog data from the Lộc Sang admin panel.
+- Storefront checkout creates local orders immediately and does not require any third-party POS configuration.
+- Admin order status updates are local-only: `pending`, `processing`, `shipped`, `delivered`, `cancelled`.
+- Customer delivery information is stored as receiver name, phone, address text, and optional note.

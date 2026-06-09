@@ -19,12 +19,6 @@ class PublicOrderCreateBody(BaseModel):
     receiver_phone: str = Field(alias='receiverPhone', min_length=8, max_length=20)
     receiver_email: Optional[EmailStr] = Field(default=None, alias='receiverEmail')
     receiver_address: str = Field(alias='receiverAddress', min_length=3, max_length=300)
-    receiver_province_id: Optional[int] = Field(default=None, alias='receiverProvinceId', gt=0)
-    receiver_district_id: Optional[int] = Field(default=None, alias='receiverDistrictId', gt=0)
-    receiver_ward_id: Optional[int] = Field(default=None, alias='receiverWardId', gt=0)
-    receiver_province_name: Optional[str] = Field(default=None, alias='receiverProvinceName', max_length=120)
-    receiver_district_name: Optional[str] = Field(default=None, alias='receiverDistrictName', max_length=120)
-    receiver_ward_name: Optional[str] = Field(default=None, alias='receiverWardName', max_length=120)
     payment_method: str = Field(alias='paymentMethod', default='cod', min_length=2, max_length=50)
     note: Optional[str] = Field(default=None, max_length=2000)
     items: List[PublicOrderItemCreate] = Field(min_length=1)
@@ -55,7 +49,6 @@ class PublicOrderItemResponse(BaseModel):
 class PublicOrderResponseData(BaseModel):
     id: int
     tracking_code: Optional[str] = Field(default=None, alias='trackingCode')
-    pancake_order_id: Optional[str] = Field(default=None, alias='pancakeOrderId')
     status: str
     payment_status: str = Field(alias='paymentStatus')
     payment_method: str = Field(alias='paymentMethod')

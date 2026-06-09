@@ -358,18 +358,16 @@ def _build_order_admin_body(
     receiver_email: Optional[str],
     payment_method: str,
     total_amount: float,
-    pancake_order_id: Optional[str],
     items: list[dict[str, object]],
+    html: bool = False,
 ) -> str:
     email_text = _clean_text(receiver_email) or "(khong cung cap)"
-    pancake_text = _clean_text(pancake_order_id) or "(chua co)"
     return "\n".join(
         [
             "Co don hang moi tu website Lộc Sang.",
             "",
             f"Order ID: #{order_id}",
             f"Tracking code: {tracking_code}",
-            f"Pancake order ID: {pancake_text}",
             f"Nguoi nhan: {receiver_name}",
             f"Dien thoai: {receiver_phone}",
             f"Email: {email_text}",
@@ -463,7 +461,6 @@ async def send_order_email_flow(
     total_amount: float,
     items: list[dict[str, object]],
     receiver_email: Optional[str] = None,
-    pancake_order_id: Optional[str] = None,
 ) -> None:
     admin_recipients = _resolve_order_admin_recipients()
     if admin_recipients:
@@ -478,7 +475,6 @@ async def send_order_email_flow(
                     receiver_email=receiver_email,
                     payment_method=payment_method,
                     total_amount=total_amount,
-                    pancake_order_id=pancake_order_id,
                     items=items,
                 ),
                 body_html=_build_order_admin_body(
@@ -490,7 +486,6 @@ async def send_order_email_flow(
                     receiver_email=receiver_email,
                     payment_method=payment_method,
                     total_amount=total_amount,
-                    pancake_order_id=pancake_order_id,
                     items=items,
                     html=True,
                 ),

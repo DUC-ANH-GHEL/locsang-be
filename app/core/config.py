@@ -45,21 +45,6 @@ class Settings(BaseSettings):
     CLOUDINARY_API_KEY: Optional[str] = None
     CLOUDINARY_API_SECRET: Optional[str] = None
 
-    # Pancake POS
-    PANCAKE_ENABLED: bool = False
-    PANCAKE_BASE_URL: str = "https://pos.pages.fm/api/v1"
-    PANCAKE_API_KEY: Optional[str] = None
-    PANCAKE_SHOP_ID: Optional[int] = None
-    PANCAKE_SYNC_STRICT: bool = False
-    PANCAKE_ORDER_MUST_SYNC: bool = True
-    PANCAKE_ORDER_STATUS: int = 0
-    PANCAKE_ORDER_STATUS_SYNC_STRICT: bool = False
-    PANCAKE_WEBHOOK_SECRET: Optional[str] = None
-    PANCAKE_WEBHOOK_TOKEN: Optional[str] = None
-    PANCAKE_PRODUCT_SYNC_PAGE_SIZE: int = 100
-    PANCAKE_CATALOG_READ_ONLY: bool = True
-    CRON_SECRET: Optional[str] = None
-
     # OAuth (optional)
     GOOGLE_OAUTH_CLIENT_ID: Optional[str] = None
     FACEBOOK_APP_ID: Optional[str] = None

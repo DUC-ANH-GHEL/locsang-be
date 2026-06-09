@@ -1,5 +1,4 @@
-import asyncio
-import hashlib
+﻿import hashlib
 import secrets
 from datetime import timedelta
 from typing import Optional
@@ -11,7 +10,6 @@ from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.application.services.pancake_order_service import PancakeOrderService
 from app.core.config import settings
 from app.core.database import get_db
 from app.core.role_helpers import get_or_create_customer_role_id, is_customer_role
@@ -24,7 +22,6 @@ from app.services.email_service import send_password_changed_email, send_passwor
 
 
 router = APIRouter(prefix="/account", tags=["Public Account"])
-pancake_order_service = PancakeOrderService()
 STOREFRONT_TOKEN_SCOPE = "storefront"
 PASSWORD_RESET_TOKEN_SCOPE = "storefront_password_reset"
 
@@ -103,9 +100,7 @@ class AccountOrderItemResponse(BaseModel):
 class AccountOrderResponse(BaseModel):
     id: int
     tracking_code: Optional[str] = None
-    pancake_order_id: Optional[str] = None
     status: str
-    pancake_status_raw: Optional[object] = None
     payment_status: str
     payment_method: str
     receiver_name: Optional[str] = None
@@ -124,12 +119,6 @@ class AccountOrdersResponse(BaseModel):
 class AccountOrderActionResponse(BaseModel):
     success: bool = True
     data: AccountOrderResponse
-
-
-class AccountOrderRepairSummaryResponse(BaseModel):
-    success: bool = True
-    repaired: int
-    scanned: int
 
 
 class AccountCartItemBody(BaseModel):
@@ -566,394 +555,51 @@ async def update_account_me(
     return _to_profile(current_user)
 
 
-def _coerce_dict(raw: object) -> dict:
-    return raw if isinstance(raw, dict) else {}
-
-
-def _coerce_list(raw: object) -> list[dict]:
-    if not isinstance(raw, list):
-        return []
-    return [item for item in raw if isinstance(item, dict)]
-
-
-def _pick_first_non_empty(source: dict, keys: tuple[str, ...]) -> Optional[object]:
-    for key in keys:
-        value = source.get(key)
-        if value is None:
-            continue
-        if isinstance(value, str):
-            if value.strip():
-                return value
-            continue
-        return value
-    return None
-
-
-def _safe_int(value: object, default: int = 0) -> int:
-    try:
-        return int(value)
-    except Exception:
-        return default
-
-
-def _safe_float(value: object, default: float = 0.0) -> float:
-    try:
-        return float(value)
-    except Exception:
-        return default
-
-
-def _compose_shipping_address(address_obj: dict) -> Optional[str]:
-    if not isinstance(address_obj, dict):
-        return None
-
-    full_address = _pick_first_non_empty(address_obj, ("full_address", "fullAddress"))
-    if isinstance(full_address, str) and full_address.strip():
-        return full_address.strip()
-
-    parts: list[str] = []
-    street = _pick_first_non_empty(address_obj, ("address",))
-    commune = _pick_first_non_empty(address_obj, ("commune_name", "ward_name", "communeName", "wardName"))
-    district = _pick_first_non_empty(address_obj, ("district_name", "districtName"))
-    province = _pick_first_non_empty(address_obj, ("province_name", "provinceName"))
-
-    for value in (street, commune, district, province):
-        if value is None:
-            continue
-        text = str(value).strip()
-        if text:
-            parts.append(text)
-
-    return ", ".join(parts) if parts else None
-
-
-def _extract_pancake_order_data(detail: dict) -> dict:
-    if not isinstance(detail, dict):
-        return {}
-
-    def _looks_like_order_payload(candidate: dict) -> bool:
-        if not isinstance(candidate, dict):
-            return False
-        order_signals = (
-            "bill_full_name",
-            "bill_phone_number",
-            "bill_address",
-            "shipping_address",
-            "status",
-            "order_status",
-            "custom_id",
-            "total_amount",
-            "total_price",
-            "cod",
-            "cash",
+def _order_to_response(order: Order) -> AccountOrderResponse:
+    items: list[AccountOrderItemResponse] = []
+    for item in order.items or []:
+        product = getattr(item, "product", None)
+        variant = getattr(item, "variant", None)
+        product_name = str(getattr(product, "name", "") or f"Sáº£n pháº©m #{item.product_id}")
+        variant_label = " / ".join(
+            [
+                str(part).strip()
+                for part in (
+                    getattr(variant, "sku", None),
+                    getattr(variant, "size", None),
+                    getattr(variant, "color", None),
+                    getattr(variant, "material", None),
+                )
+                if str(part or "").strip()
+            ]
         )
-        item_signals = ("product_id", "variation_id", "quantity", "variation_info")
-        has_order_signal = any(candidate.get(key) is not None for key in order_signals)
-        has_item_signal = any(candidate.get(key) is not None for key in item_signals)
-        return has_order_signal or (not has_item_signal and candidate.get("id") is not None and candidate.get("status") is not None)
+        if variant_label:
+            product_name = f"{product_name} ({variant_label})"
 
-    direct_order = _coerce_dict(detail.get("order"))
-    if direct_order and _looks_like_order_payload(direct_order):
-        return direct_order
-
-    data = _coerce_dict(detail.get("data"))
-    nested_order = _coerce_dict(data.get("order"))
-    if nested_order and _looks_like_order_payload(nested_order):
-        return nested_order
-
-    if data and _looks_like_order_payload(data):
-        return data
-
-    if _looks_like_order_payload(detail):
-        return detail
-
-    for key in ("orders", "results", "list"):
-        for item in _coerce_list(data.get(key)):
-            as_order = _coerce_dict(item.get("order"))
-            if as_order and _looks_like_order_payload(as_order):
-                return as_order
-            if item and _looks_like_order_payload(item):
-                return item
-
-    for key in ("orders", "results", "list"):
-        for item in _coerce_list(detail.get(key)):
-            as_order = _coerce_dict(item.get("order"))
-            if as_order and _looks_like_order_payload(as_order):
-                return as_order
-            if item and _looks_like_order_payload(item):
-                return item
-
-    from_order = _coerce_dict(detail.get("order"))
-    if from_order and _looks_like_order_payload(from_order):
-        return from_order
-    if data and _looks_like_order_payload(data):
-        return data
-    return detail
-
-
-def _extract_pancake_items(order_data: dict) -> list[dict]:
-    for key in (
-        "items",
-        "order_items",
-        "orderItems",
-        "products",
-        "line_items",
-        "lineItems",
-        "lines",
-        "order_lines",
-        "orderLines",
-        "details",
-    ):
-        items = _coerce_list(order_data.get(key))
-        if items:
-            return items
-
-    nested_order = _coerce_dict(order_data.get("order"))
-    if nested_order:
-        for key in (
-            "items",
-            "order_items",
-            "orderItems",
-            "products",
-            "line_items",
-            "lineItems",
-            "lines",
-            "order_lines",
-            "orderLines",
-            "details",
-        ):
-            items = _coerce_list(nested_order.get(key))
-            if items:
-                return items
-
-    return []
-
-
-def _map_pancake_item_to_response(item: dict) -> AccountOrderItemResponse:
-    variation_info = _coerce_dict(item.get("variation_info"))
-    product_id = _safe_int(
-        _pick_first_non_empty(item, ("product_id", "productId", "id", "item_id", "itemId")),
-        0,
-    )
-    variant_id_raw = _pick_first_non_empty(
-        item,
-        ("product_variant_id", "productVariantId", "variant_id", "variantId", "variation_id", "variationId"),
-    )
-    quantity = max(1, _safe_int(_pick_first_non_empty(item, ("quantity", "qty", "count", "amount")), 1))
-    unit_price = _safe_float(
-        _pick_first_non_empty(item, ("unit_price", "unitPrice", "price", "selling_price", "retail_price")),
-        _safe_float(_pick_first_non_empty(variation_info, ("retail_price", "price")), 0.0),
-    )
-    subtotal = _safe_float(_pick_first_non_empty(item, ("subtotal", "line_total", "lineTotal", "total", "amount")), unit_price * quantity)
-    name = str(
-        _pick_first_non_empty(item, ("name", "title", "product_name", "productName", "variation_name"))
-        or _pick_first_non_empty(variation_info, ("name", "detail"))
-        or "Product"
-    )
-    sku_raw = _pick_first_non_empty(item, ("sku", "item_sku", "itemSku", "code", "barcode"))
-    if sku_raw is None:
-        sku_raw = _pick_first_non_empty(variation_info, ("barcode", "display_id", "product_display_id"))
-
-    return AccountOrderItemResponse(
-        product_id=product_id,
-        product_variant_id=(_safe_int(variant_id_raw) if variant_id_raw is not None else None),
-        name=name,
-        sku=(str(sku_raw) if sku_raw is not None else None),
-        quantity=quantity,
-        unit_price=unit_price,
-        subtotal=subtotal,
-    )
-
-
-def _extract_pancake_order_id(order_data: dict, fallback_id: Optional[str]) -> Optional[str]:
-    # Use canonical id/order_id only. display_id is for display and can break detail fetch.
-    candidate = _pick_first_non_empty(order_data, ("id", "order_id", "orderId"))
-    if candidate is None:
-        return fallback_id
-    normalized = str(candidate).strip()
-    return normalized or fallback_id
-
-
-def _extract_pancake_items_from_any(detail: Optional[dict]) -> list[dict]:
-    if not isinstance(detail, dict):
-        return []
-
-    for candidate in (
-        _extract_pancake_order_data(detail),
-        _coerce_dict(detail.get("data")),
-        detail,
-    ):
-        if not isinstance(candidate, dict):
-            continue
-        items = _extract_pancake_items(candidate)
-        if items:
-            return items
-
-    return []
-
-
-def _normalize_phone(value: Optional[str]) -> str:
-    digits = "".join(ch for ch in str(value or "") if ch.isdigit())
-    if digits.startswith("84") and len(digits) >= 10:
-        digits = f"0{digits[2:]}"
-    return digits
-
-
-def _payload_belongs_to_tracking_code(
-    payload: Optional[dict],
-    tracking_code: Optional[str],
-    expected_pancake_order_id: Optional[str] = None,
-) -> bool:
-    if not isinstance(payload, dict):
-        return False
-
-    expected = str(tracking_code or "").strip()
-    expected_order_id = str(expected_pancake_order_id or "").strip()
-    if not expected:
-        return True
-
-    order_data = _extract_pancake_order_data(payload)
-    custom_candidate = _pick_first_non_empty(
-        order_data,
-        ("custom_id", "customId", "tracking_code", "trackingCode"),
-    )
-    if custom_candidate is None:
-        custom_candidate = _pick_first_non_empty(
-            payload,
-            ("custom_id", "customId", "tracking_code", "trackingCode"),
+        items.append(
+            AccountOrderItemResponse(
+                product_id=int(item.product_id),
+                product_variant_id=int(item.product_variant_id) if item.product_variant_id is not None else None,
+                name=product_name,
+                sku=getattr(variant, "sku", None) or getattr(product, "sku", None),
+                quantity=int(item.quantity),
+                unit_price=float(item.price or 0),
+                subtotal=float(item.total or 0),
+            )
         )
-
-    if custom_candidate is None:
-        # Some Pancake payload variants omit custom_id; allow matching by order id as a safe fallback.
-        if expected_order_id:
-            payload_order_id = _extract_pancake_order_id(order_data, None)
-            if payload_order_id is None:
-                payload_order_id = _extract_pancake_order_id(payload, None)
-            if payload_order_id is not None and str(payload_order_id).strip() == expected_order_id:
-                return True
-        return False
-
-    return str(custom_candidate).strip() == expected
-
-
-def _order_to_response_from_pancake(order: Order, detail: Optional[dict]) -> AccountOrderResponse:
-    order_data = _extract_pancake_order_data(detail or {}) if isinstance(detail, dict) else {}
-    shipping_address = _coerce_dict(order_data.get("shipping_address"))
-    customer_data = _coerce_dict(order_data.get("customer"))
-    detail_data = _coerce_dict(detail.get("data")) if isinstance(detail, dict) else {}
-    detail_shipping = _coerce_dict(detail_data.get("shipping_address")) if detail_data else {}
-
-    status_raw = _pick_first_non_empty(
-        order_data,
-        (
-            "status",
-            "order_status",
-            "orderStatus",
-            "state",
-            "status_id",
-            "statusId",
-            "order_status_id",
-            "orderStatusId",
-            "status_name",
-            "statusName",
-            "order_status_name",
-            "orderStatusName",
-            "shipping_status",
-            "shippingStatus",
-            "fulfillment_status",
-            "fulfillmentStatus",
-        ),
-    )
-    if status_raw is None and isinstance(detail, dict):
-        status_raw = _pick_first_non_empty(
-            detail,
-            (
-                "status",
-                "order_status",
-                "orderStatus",
-                "state",
-                "status_id",
-                "statusId",
-                "order_status_id",
-                "orderStatusId",
-                "status_name",
-                "statusName",
-                "order_status_name",
-                "orderStatusName",
-                "shipping_status",
-                "shippingStatus",
-                "fulfillment_status",
-                "fulfillmentStatus",
-            ),
-        )
-
-    status_value = pancake_order_service.pancake_status_to_local_status(status_raw)
-    raw_items = _extract_pancake_items(order_data)
-    if not raw_items and isinstance(detail, dict):
-        raw_items = _extract_pancake_items_from_any(detail)
-    pancake_items = [_map_pancake_item_to_response(item) for item in raw_items]
-
-    receiver_name = _pick_first_non_empty(
-        order_data,
-        ("bill_full_name", "receiver_name", "receiverName", "customer_name", "customerName"),
-    )
-    if receiver_name is None:
-        receiver_name = _pick_first_non_empty(shipping_address, ("full_name", "name", "receiver_name", "receiverName"))
-    if receiver_name is None:
-        receiver_name = _pick_first_non_empty(customer_data, ("name", "full_name", "fullName"))
-    if receiver_name is None and detail_data:
-        receiver_name = _pick_first_non_empty(
-            detail_data,
-            ("bill_full_name", "receiver_name", "receiverName", "customer_name", "customerName"),
-        )
-    if receiver_name is None:
-        receiver_name = _pick_first_non_empty(detail_shipping, ("full_name", "name", "receiver_name", "receiverName"))
-    if receiver_name is None and isinstance(detail, dict):
-        receiver_name = _pick_first_non_empty(
-            detail,
-            ("bill_full_name", "receiver_name", "receiverName", "customer_name", "customerName"),
-        )
-
-    receiver_phone = _pick_first_non_empty(order_data, ("bill_phone_number", "receiver_phone", "receiverPhone", "phone"))
-    if receiver_phone is None:
-        receiver_phone = _pick_first_non_empty(shipping_address, ("phone_number", "phone", "receiver_phone", "receiverPhone"))
-    if receiver_phone is None and detail_data:
-        receiver_phone = _pick_first_non_empty(detail_data, ("bill_phone_number", "receiver_phone", "receiverPhone", "phone"))
-    if receiver_phone is None:
-        receiver_phone = _pick_first_non_empty(detail_shipping, ("phone_number", "phone", "receiver_phone", "receiverPhone"))
-
-    receiver_address = _pick_first_non_empty(order_data, ("bill_address", "receiver_address", "receiverAddress", "address", "full_address"))
-    if receiver_address is None:
-        receiver_address = _compose_shipping_address(shipping_address)
-    if receiver_address is None and detail_data:
-        receiver_address = _pick_first_non_empty(detail_data, ("bill_address", "receiver_address", "receiverAddress", "address", "full_address"))
-    if receiver_address is None:
-        receiver_address = _compose_shipping_address(detail_shipping)
-    payment_method = _pick_first_non_empty(order_data, ("payment_method", "paymentMethod", "payment_type", "paymentType", "pay_method", "payMethod"))
-    payment_status = _pick_first_non_empty(order_data, ("payment_status", "paymentStatus", "payment_state", "paymentState", "is_paid", "isPaid"))
-    total_amount = _pick_first_non_empty(order_data, ("total_amount", "totalAmount", "total", "grand_total", "grandTotal", "total_payment", "totalPayment", "cod"))
-    created_at_raw = _pick_first_non_empty(order_data, ("created_at", "createdAt", "inserted_at", "created"))
-
-    normalized_payment_status = str(payment_status or order.payment_status or "pending").strip().lower()
-    if normalized_payment_status in {"true", "1", "paid", "da_thanh_toan", "đã thanh toán"}:
-        normalized_payment_status = "paid"
-    elif normalized_payment_status in {"false", "0", "unpaid", "pending", "cho_thanh_toan", "chờ thanh toán"}:
-        normalized_payment_status = "pending"
 
     return AccountOrderResponse(
         id=int(order.id),
         tracking_code=order.tracking_code,
-        pancake_order_id=_extract_pancake_order_id(order_data, order.pancake_order_id),
-        status=status_value,
-        pancake_status_raw=status_raw,
-        payment_status=normalized_payment_status,
-        payment_method=str(payment_method or order.payment_method or "cod"),
-        receiver_name=str(receiver_name or "") or None,
-        receiver_phone=str(receiver_phone or order.receiver_phone or "") or None,
-        receiver_address=str(receiver_address or "") or None,
-        total_amount=_safe_float(total_amount, float(order.total_amount or 0)),
-        created_at=(str(created_at_raw) if created_at_raw is not None else (order.created_at.isoformat() if order.created_at else "")),
-        items=pancake_items,
+        status=str(getattr(order.status, "value", order.status) or "pending"),
+        payment_status=str(order.payment_status or "pending"),
+        payment_method=str(order.payment_method or "cod"),
+        receiver_name=order.receiver_name,
+        receiver_phone=order.receiver_phone,
+        receiver_address=order.receiver_address,
+        total_amount=float(order.total_amount or 0),
+        created_at=order.created_at.isoformat() if order.created_at else "",
+        items=items,
     )
 
 
@@ -964,7 +610,7 @@ async def _claim_legacy_guest_orders_by_phone(db: AsyncSession, user: User, rece
 
     stmt = (
         select(Order)
-        .where(Order.user_id == 0, Order.deleted_at.is_(None), Order.pancake_order_id.is_not(None))
+        .where(Order.user_id == 0, Order.deleted_at.is_(None))
         .order_by(Order.id.desc())
         .limit(300)
     )
@@ -994,133 +640,17 @@ async def get_my_orders(
     current_user: User = Depends(get_current_account_user),
 ):
     await _claim_legacy_guest_orders_by_phone(db, current_user, receiver_phone)
-
-    live_sync_limit = 12
-
     stmt = (
         select(Order)
         .where(
             Order.user_id == int(current_user.id),
             Order.deleted_at.is_(None),
-            Order.pancake_order_id.is_not(None),
         )
         .order_by(Order.created_at.desc(), Order.id.desc())
         .limit(40)
     )
     orders = (await db.execute(stmt)).scalars().all()
-
-    initial_details: list[Optional[dict]] = [None] * len(orders)
-    if pancake_order_service.is_enabled() and pancake_order_service.is_configured() and orders:
-        semaphore = asyncio.Semaphore(8)
-        refresh_indices = [
-            idx for idx, order in enumerate(orders)
-            if idx < live_sync_limit or not isinstance(order.pancake_payload, dict)
-        ]
-
-        async def _fetch_detail_by_id(idx: int, order_obj: Order) -> tuple[int, Optional[dict]]:
-            tracking_code_inner = str(order_obj.tracking_code or "").strip()
-            pancake_order_id_inner = str(order_obj.pancake_order_id or "").strip()
-            if not pancake_order_id_inner:
-                return idx, None
-
-            async with semaphore:
-                detail = await pancake_order_service.get_order_detail(
-                    pancake_order_id_inner,
-                    expected_custom_id=tracking_code_inner or None,
-                )
-                return idx, detail if isinstance(detail, dict) else None
-
-        batch_results = await asyncio.gather(
-            *[_fetch_detail_by_id(idx, orders[idx]) for idx in refresh_indices]
-        )
-        for idx, detail in batch_results:
-            initial_details[idx] = detail
-
-    result: list[AccountOrderResponse] = []
-    has_updates = False
-    for idx, order in enumerate(orders):
-        tracking_code = str(order.tracking_code or "").strip()
-        allow_live_sync = idx < live_sync_limit
-        pancake_detail = initial_details[idx] if idx < len(initial_details) else None
-        if pancake_order_service.is_enabled() and pancake_order_service.is_configured():
-            # Slow fallback: resolve by tracking_code/custom_id only when direct id lookup fails.
-            if pancake_detail is None and tracking_code and allow_live_sync:
-                by_custom = await pancake_order_service.find_order_by_custom_id(tracking_code)
-                if isinstance(by_custom, dict):
-                    recovered_id = _extract_pancake_order_id(_extract_pancake_order_data(by_custom), None)
-                    if recovered_id and str(order.pancake_order_id or "").strip() != str(recovered_id).strip():
-                        order.pancake_order_id = str(recovered_id).strip()
-                        has_updates = True
-
-                    if recovered_id:
-                        refetched = await pancake_order_service.get_order_detail(
-                            str(recovered_id),
-                            expected_custom_id=tracking_code or None,
-                        )
-                        pancake_detail = refetched if isinstance(refetched, dict) else by_custom
-                    else:
-                        pancake_detail = by_custom
-
-        effective_detail = (
-            pancake_detail
-            if isinstance(pancake_detail, dict)
-            else (
-                order.pancake_payload
-                if _payload_belongs_to_tracking_code(
-                    order.pancake_payload if isinstance(order.pancake_payload, dict) else None,
-                    tracking_code,
-                    str(order.pancake_order_id or "") or None,
-                )
-                else None
-            )
-        )
-
-        response_item = _order_to_response_from_pancake(order, effective_detail)
-
-        # When Pancake search returns summary rows (no items), force a strict detail fetch.
-        if (
-            len(response_item.items) == 0
-            and pancake_order_service.is_enabled()
-            and pancake_order_service.is_configured()
-            and allow_live_sync
-        ):
-            canonical_id = str(response_item.pancake_order_id or order.pancake_order_id or "").strip()
-            if canonical_id:
-                strict_detail = await pancake_order_service.get_order_detail(
-                    canonical_id,
-                    expected_custom_id=tracking_code or None,
-                )
-                strict_view = _order_to_response_from_pancake(order, strict_detail if isinstance(strict_detail, dict) else None)
-                if len(strict_view.items) > 0:
-                    response_item = strict_view
-                    if isinstance(strict_detail, dict):
-                        effective_detail = strict_detail
-                        if order.pancake_payload != strict_detail:
-                            order.pancake_payload = strict_detail
-                            has_updates = True
-
-        result.append(response_item)
-
-        if str(order.status or "") != str(response_item.status or ""):
-            order.status = response_item.status
-            has_updates = True
-        if str(order.payment_status or "") != str(response_item.payment_status or ""):
-            order.payment_status = response_item.payment_status
-            has_updates = True
-        # Keep mapping in sync with verified detail.
-        recovered_pancake_id = response_item.pancake_order_id if isinstance(effective_detail, dict) else None
-        if recovered_pancake_id and str(order.pancake_order_id or "").strip() != str(recovered_pancake_id).strip():
-            order.pancake_order_id = str(recovered_pancake_id).strip()
-            has_updates = True
-        if isinstance(pancake_detail, dict) and order.pancake_payload != pancake_detail:
-            order.pancake_payload = pancake_detail
-            has_updates = True
-
-    if has_updates:
-        await db.flush()
-        await db.commit()
-
-    return AccountOrdersResponse(success=True, data=result)
+    return AccountOrdersResponse(success=True, data=[_order_to_response(order) for order in orders])
 
 
 @router.post("/orders/{order_id}/cancel", response_model=AccountOrderActionResponse)
@@ -1135,7 +665,6 @@ async def cancel_my_order(
             Order.id == int(order_id),
             Order.user_id == int(current_user.id),
             Order.deleted_at.is_(None),
-            Order.pancake_order_id.is_not(None),
         )
         .limit(1)
     )
@@ -1143,146 +672,19 @@ async def cancel_my_order(
     if order is None:
         raise HTTPException(status_code=404, detail="Order not found")
 
-    if not pancake_order_service.is_enabled() or not pancake_order_service.is_configured():
-        raise HTTPException(status_code=503, detail="Pancake is not configured for order cancellation")
-
-    tracking_code = str(order.tracking_code or "").strip()
-
-    latest_detail = None
-    if tracking_code:
-        # Always resolve by custom_id first for cancellation to avoid updating the wrong Pancake order.
-        by_custom = await pancake_order_service.find_order_by_custom_id(tracking_code)
-        if isinstance(by_custom, dict):
-            recovered_for_detail = _extract_pancake_order_id(_extract_pancake_order_data(by_custom), None)
-            if recovered_for_detail:
-                if str(order.pancake_order_id or "").strip() != str(recovered_for_detail).strip():
-                    order.pancake_order_id = str(recovered_for_detail).strip()
-
-                refetched = await pancake_order_service.get_order_detail(
-                    str(recovered_for_detail),
-                    expected_custom_id=tracking_code or None,
-                )
-                latest_detail = refetched if isinstance(refetched, dict) else by_custom
-            else:
-                latest_detail = by_custom
-
-    if latest_detail is None:
-        latest_detail = await pancake_order_service.get_order_detail(
-            str(order.pancake_order_id or ""),
-            expected_custom_id=tracking_code or None,
-        )
-
-    if isinstance(latest_detail, dict):
-        recovered = _extract_pancake_order_id(_extract_pancake_order_data(latest_detail), str(order.pancake_order_id or ""))
-        if recovered and str(recovered).strip() and str(order.pancake_order_id or "").strip() != str(recovered).strip():
-            order.pancake_order_id = str(recovered).strip()
-
-    effective_detail = latest_detail if isinstance(latest_detail, dict) else (order.pancake_payload if isinstance(order.pancake_payload, dict) else None)
-
-    if tracking_code and not _payload_belongs_to_tracking_code(
-        effective_detail if isinstance(effective_detail, dict) else None,
-        tracking_code,
-        str(order.pancake_order_id or "") or None,
-    ):
-        raise HTTPException(
-            status_code=409,
-            detail="Không thể xác minh mapping đơn Pancake theo mã đơn nội bộ. Vui lòng tải lại danh sách đơn và thử lại.",
-        )
-
-    current_view = _order_to_response_from_pancake(order, effective_detail)
-    current_status = str(current_view.status or "").strip().lower()
+    current_status = str(order.status or "").strip().lower()
 
     if current_status in {"shipped", "delivered"}:
         raise HTTPException(status_code=409, detail="Order is already shipping/delivered and cannot be cancelled")
 
     if current_status == "cancelled":
-        if isinstance(latest_detail, dict) and order.pancake_payload != latest_detail:
-            order.pancake_payload = latest_detail
-            await db.flush()
-            await db.commit()
-        return AccountOrderActionResponse(success=True, data=current_view)
+        return AccountOrderActionResponse(success=True, data=_order_to_response(order))
 
-    try:
-        cancel_result = await pancake_order_service.update_order_status(
-            pancake_order_id=str(order.pancake_order_id),
-            local_status="cancelled",
-            pancake_status=6,
-        )
-    except Exception as exc:
-        if pancake_order_service.is_permission_sync_error(exc):
-            raise HTTPException(
-                status_code=403,
-                detail="API key Pancake hiện tại không có quyền hủy/cập nhật trạng thái đơn hàng này. Vui lòng cấp quyền Update Order cho API key.",
-            )
-        raise HTTPException(status_code=502, detail=f"Failed to cancel order on Pancake: {exc}")
-
-    refreshed_detail = await pancake_order_service.get_order_detail(
-        str(order.pancake_order_id or ""),
-        expected_custom_id=str(order.tracking_code or "").strip() or None,
-    )
-    final_detail = (
-        refreshed_detail
-        if isinstance(refreshed_detail, dict)
-        else (cancel_result if isinstance(cancel_result, dict) else effective_detail)
-    )
-
-    final_view = _order_to_response_from_pancake(order, final_detail if isinstance(final_detail, dict) else None)
     order.status = OrderStatus.CANCELLED.value
-    order.payment_status = str(final_view.payment_status or order.payment_status or "pending")
-    if isinstance(final_detail, dict):
-        order.pancake_payload = final_detail
-
     await db.flush()
     await db.commit()
 
-    final_view = final_view.model_copy(update={"status": OrderStatus.CANCELLED.value})
-    return AccountOrderActionResponse(success=True, data=final_view)
-
-
-@router.post("/orders/repair-mapping", response_model=AccountOrderRepairSummaryResponse)
-async def repair_my_order_mapping(
-    db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_account_user),
-):
-    stmt = (
-        select(Order)
-        .where(
-            Order.user_id == int(current_user.id),
-            Order.deleted_at.is_(None),
-        )
-        .order_by(Order.created_at.desc(), Order.id.desc())
-        .limit(200)
-    )
-    orders = (await db.execute(stmt)).scalars().all()
-
-    repaired = 0
-    for order in orders:
-        tracking_code = str(order.tracking_code or "").strip()
-        if not tracking_code:
-            continue
-
-        detail = await pancake_order_service.find_order_by_custom_id(tracking_code)
-        if not isinstance(detail, dict):
-            continue
-
-        recovered_id = _extract_pancake_order_id(_extract_pancake_order_data(detail), None)
-        changed = False
-        if recovered_id and str(order.pancake_order_id or "").strip() != str(recovered_id).strip():
-            order.pancake_order_id = str(recovered_id).strip()
-            changed = True
-
-        if order.pancake_payload != detail:
-            order.pancake_payload = detail
-            changed = True
-
-        if changed:
-            repaired += 1
-
-    if repaired > 0:
-        await db.flush()
-        await db.commit()
-
-    return AccountOrderRepairSummaryResponse(success=True, repaired=repaired, scanned=len(orders))
+    return AccountOrderActionResponse(success=True, data=_order_to_response(order))
 
 
 @router.get("/cart", response_model=AccountCartResponse)

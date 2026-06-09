@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, Float, DateTime, ForeignKey, String
+from sqlalchemy import Column, Integer, Float, DateTime, ForeignKey
 from sqlalchemy.orm import relationship
 from datetime import datetime
 from app.core.database import Base
@@ -10,7 +10,6 @@ class OrderItem(Base):
     order_id = Column(Integer, ForeignKey("orders.id"))
     product_id = Column(Integer, ForeignKey("products.id"))
     product_variant_id = Column(Integer, ForeignKey("product_variants.id"), nullable=True)
-    pancake_variation_id = Column(String(100), nullable=True, index=True)
     quantity = Column(Integer, nullable=False)
     # DB column is `unit_price`; keep attribute name `price` for compatibility
     price = Column("unit_price", Float, nullable=False)

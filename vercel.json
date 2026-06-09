@@ -11,11 +11,5 @@
   ],
   "routes": [
     {"src": "/(.*)", "dest": "app/main.py"}
-  ],
-  "crons": [
-    {
-      "path": "/api/admin/products/sync/pancake/auto",
-      "schedule": "0 2 * * *"
-    }
   ]
 }

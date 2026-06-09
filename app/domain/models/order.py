@@ -1,5 +1,4 @@
 from sqlalchemy import Column, Integer, String, ForeignKey, Boolean, DateTime, Float, Enum, Text
-from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import relationship
 from datetime import datetime
 import enum
@@ -52,6 +51,6 @@ class Order(Base):
     items = relationship("OrderItem", back_populates="order", cascade="all, delete-orphan")
 
     tracking_code = Column(String(100), nullable=True)
+    receiver_name = Column(String, nullable=True)
     receiver_phone = Column(String)
-    pancake_order_id = Column(String(100), nullable=True, index=True)
-    pancake_payload = Column(JSONB, nullable=True)
+    receiver_address = Column(Text, nullable=True)

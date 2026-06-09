@@ -44,8 +44,6 @@ class Product(Base):
     thumbnail = Column(String, nullable=True)
     currency = Column(String, nullable=False, default="VND")
     sku = Column(String, unique=True, index=True)
-    pancake_product_id = Column(String, nullable=True, unique=True, index=True)
-    pancake_payload = Column(JSONB, nullable=True)
     is_active = Column(Boolean, default=True)
     affiliate = Column(Integer, nullable=True)
     stock = Column(Integer, nullable=False, default=0)
@@ -103,8 +101,6 @@ class ProductVariant(Base):
     product_id = Column(Integer, ForeignKey("products.id", ondelete="CASCADE"), nullable=False, index=True)
 
     sku = Column(String, nullable=False, unique=True, index=True)
-    pancake_variation_id = Column(String, nullable=True, unique=True, index=True)
-    pancake_payload = Column(JSONB, nullable=True)
     size = Column(String, nullable=True)
     color = Column(String, nullable=True)
     material = Column(String, nullable=True)

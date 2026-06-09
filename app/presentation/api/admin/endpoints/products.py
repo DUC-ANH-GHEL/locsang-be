@@ -1,10 +1,10 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import itertools
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import Select, case, delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -18,8 +18,6 @@ from app.application.dto.admin_product import (
     BulkUpdateVariantsBody,
     GenerateVariantsBody,
 )
-from app.application.services.pancake_product_sync_service import PancakeProductSyncError, PancakeProductSyncService
-from app.core.config import settings
 from app.core.deps import get_current_user, get_db
 from app.domain.models.category import Category
 from app.domain.models.product import (
@@ -36,7 +34,6 @@ from app.core.admin_api_error import AdminAPIError
 
 
 router = APIRouter()
-pancake_product_sync_service = PancakeProductSyncService()
 
 
 def _parse_bool(raw: Optional[str]) -> Optional[bool]:
@@ -152,17 +149,9 @@ def _resolve_admin_thumbnail(product: Product) -> Optional[str]:
     # 2) Product thumbnail field
     _push(getattr(product, "thumbnail", None))
 
-    # 3) Pancake raw product media
-    payload = product.pancake_payload if isinstance(product.pancake_payload, dict) else {}
-    for media_url in _extract_media_urls_from_payload(payload):
-        _push(media_url)
-
-    # 4) Variant image/media fallback
+    # 3) Variant image fallback
     for variant in sorted(product.variants or [], key=lambda x: x.id or 0):
         _push(getattr(variant, "image_url", None))
-        v_payload = variant.pancake_payload if isinstance(variant.pancake_payload, dict) else {}
-        for media_url in _extract_media_urls_from_payload(v_payload):
-            _push(media_url)
 
     if preferred:
         return preferred[0]
@@ -171,145 +160,11 @@ def _resolve_admin_thumbnail(product: Product) -> Optional[str]:
     return None
 
 
-def _extract_pancake_overview(product: Product) -> Dict[str, Any]:
-    payload = product.pancake_payload if isinstance(product.pancake_payload, dict) else {}
-
-    tags = payload.get("tags") if isinstance(payload.get("tags"), list) else []
-    tag_labels: List[str] = []
-    for t in tags:
-        if isinstance(t, dict):
-            label = _first_non_empty(t.get("name"), t.get("note"), t.get("value"))
-            if label:
-                tag_labels.append(label)
-        elif isinstance(t, str) and t.strip():
-            tag_labels.append(t.strip())
-
-    categories = payload.get("categories") if isinstance(payload.get("categories"), list) else []
-    category_labels: List[str] = []
-    for c in categories:
-        if isinstance(c, dict):
-            name = _first_non_empty(c.get("name"), c.get("note"), c.get("title"))
-            if name:
-                category_labels.append(name)
-        elif isinstance(c, str) and c.strip():
-            category_labels.append(c.strip())
-
-    return {
-        "pancake_product_id": product.pancake_product_id,
-        "display_id": _first_non_empty(payload.get("display_id"), payload.get("displayId")),
-        "code": _first_non_empty(payload.get("code"), payload.get("product_code"), payload.get("barcode")),
-        "keyword": _first_non_empty(payload.get("keyword"), payload.get("keywords")),
-        "product_type": _first_non_empty(payload.get("type"), payload.get("product_type"), payload.get("productType")),
-        "supplier": _first_non_empty(payload.get("supplier_name"), payload.get("supplier"), payload.get("_normalized_supplier")),
-        "warehouse": _first_non_empty(payload.get("warehouse_name"), payload.get("warehouse"), payload.get("stock_name")),
-        "import_link": _first_non_empty(payload.get("import_link"), payload.get("purchase_link"), payload.get("supplier_link")),
-        "internal_note": _first_non_empty(payload.get("internal_note"), payload.get("_normalized_internal_note")),
-        "short_note": _first_non_empty(payload.get("note")),
-        "description": _first_non_empty(payload.get("note_product"), payload.get("description")),
-        "seo_slug": _first_non_empty(payload.get("_seo_slug"), product.slug),
-        "meta_title": _first_non_empty(payload.get("_meta_title")),
-        "meta_description": _first_non_empty(payload.get("_meta_description")),
-        "is_hidden": bool(payload.get("is_hidden")) if payload else None,
-        "is_commerce": bool(payload.get("is_commerce")) if payload else None,
-        "is_sell_negative": bool(payload.get("is_sell_negative")) if payload else None,
-        "is_weighted_pricing": payload.get("is_weighted_pricing"),
-        "hide_name_when_print": payload.get("hide_name_when_print"),
-        "skip_print_when_order": payload.get("skip_print_when_order"),
-        "out_of_stock_alert": payload.get("out_of_stock_alert"),
-        "out_of_stock_alert_value": payload.get("out_of_stock_alert_value"),
-        "created_at": _first_non_empty(payload.get("created_at"), payload.get("created_date")),
-        "updated_at": _first_non_empty(payload.get("updated_at"), payload.get("modified_date")),
-        "materials": payload.get("materials") if isinstance(payload.get("materials"), list) else [],
-        "attributes": payload.get("attributes") if isinstance(payload.get("attributes"), list) else [],
-        "promotions": payload.get("promotions") if isinstance(payload.get("promotions"), list) else [],
-        "gift_products": payload.get("gift_products") if isinstance(payload.get("gift_products"), list) else [],
-        "categories": category_labels,
-        "tags": tag_labels,
-        "raw": payload,
-    }
-
-
-def _extract_pancake_variant_overview(variant: ProductVariant) -> Dict[str, Any]:
-    payload = variant.pancake_payload if isinstance(variant.pancake_payload, dict) else {}
-
-    fields = payload.get("fields") if isinstance(payload.get("fields"), list) else []
-    normalized_fields: List[Dict[str, str]] = []
-    for f in fields:
-        if not isinstance(f, dict):
-            continue
-        name = _first_non_empty(f.get("name"))
-        value = _first_non_empty(f.get("value"))
-        if name and value:
-            normalized_fields.append({"name": name, "value": value})
-
-    return {
-        "pancake_variation_id": variant.pancake_variation_id,
-        "display_id": _first_non_empty(payload.get("display_id"), payload.get("displayId")),
-        "barcode": _first_non_empty(payload.get("barcode"), payload.get("code")),
-        "name": _first_non_empty(payload.get("name"), payload.get("title")),
-        "last_import_price": payload.get("last_import_price"),
-        "retail_price": payload.get("retail_price"),
-        "price_at_counter": payload.get("price_at_counter"),
-        "weight": payload.get("weight"),
-        "available_quantity": payload.get("available_quantity"),
-        "remain_quantity": payload.get("remain_quantity"),
-        "total_import": payload.get("total_import"),
-        "incoming_quantity": payload.get("incoming_quantity"),
-        "returning_quantity": payload.get("returning_quantity"),
-        "size_text": _first_non_empty(payload.get("size"), payload.get("dimension"), payload.get("dimension_text")),
-        "is_hidden": bool(payload.get("is_hidden")) if payload else None,
-        "is_sell_negative_variation": bool(payload.get("is_sell_negative_variation")) if payload else None,
-        "fields": normalized_fields,
-        "raw": payload,
-    }
-
-
-def _extract_variant_attribute_map_from_payload(payload: Any) -> Dict[str, str]:
-    if not isinstance(payload, dict):
-        return {}
-
-    fields = payload.get("fields")
-    if not isinstance(fields, list):
-        return {}
-
-    out: Dict[str, str] = {}
-    for field in fields:
-        if not isinstance(field, dict):
-            continue
-        name = _first_non_empty(field.get("name"))
-        value = _first_non_empty(field.get("value"))
-        if name and value:
-            out[name] = value
-    return out
-
-
 def _build_variant_name(attribute_values: Dict[str, str], fallback_sku: Optional[str]) -> str:
     values = [str(v).strip() for v in (attribute_values or {}).values() if str(v).strip()]
     if values:
         return " / ".join(values)
     return str(fallback_sku or "")
-
-
-def _set_or_remove_payload_value(target: Dict[str, Any], key: str, value: Optional[str]) -> None:
-    if value is None:
-        return
-    text = str(value).strip()
-    if text:
-        target[key] = text
-    elif key in target:
-        target.pop(key, None)
-
-
-def _merge_seo_overrides_into_product_payload(product: Product, payload: AdminProductUpdateBody) -> None:
-    raw_payload = product.pancake_payload if isinstance(product.pancake_payload, dict) else {}
-    merged: Dict[str, Any] = dict(raw_payload)
-
-    seo_slug = payload.seo_slug if payload.seo_slug is not None else payload.slug
-    _set_or_remove_payload_value(merged, "_seo_slug", seo_slug)
-    _set_or_remove_payload_value(merged, "_meta_title", payload.meta_title)
-    _set_or_remove_payload_value(merged, "_meta_description", payload.meta_description)
-
-    product.pancake_payload = merged
 
 
 def _parse_sort(sort: Optional[str]) -> Tuple[str, str]:
@@ -486,8 +341,6 @@ async def admin_list_products(
             "id": product.id,
             "name": product.name,
             "sku": product.sku,
-            "pancake_product_id": product.pancake_product_id,
-            "pancake_overview": _extract_pancake_overview(product),
             "slug": product.slug,
             "thumbnail": _resolve_admin_thumbnail(product),
             "price_min": float(price_min or product.price or 0),
@@ -517,31 +370,6 @@ def _admin_error(
     status_code: int = status.HTTP_400_BAD_REQUEST,
 ) -> None:
     raise AdminAPIError(error_code=error_code, message=message, status_code=status_code)
-
-
-def _ensure_catalog_writable() -> None:
-    if settings.PANCAKE_CATALOG_READ_ONLY:
-        _admin_error(
-            error_code="CATALOG_READ_ONLY",
-            message="Catalog is managed by Pancake sync. Manual product changes are disabled.",
-            status_code=status.HTTP_403_FORBIDDEN,
-        )
-
-
-def _is_seo_only_update(payload: AdminProductUpdateBody) -> bool:
-    update_data = payload.model_dump(exclude_unset=True)
-    if not update_data:
-        return False
-
-    # In Pancake-managed mode, allow SEO overrides only.
-    allowed_fields = {
-        "slug",
-        "seo_slug",
-        "meta_title",
-        "meta_description",
-        "short_description",
-    }
-    return set(update_data.keys()).issubset(allowed_fields)
 
 
 async def _slug_exists(db: AsyncSession, slug: str, *, exclude_product_id: Optional[int] = None) -> bool:
@@ -592,8 +420,6 @@ async def admin_bulk_products(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    _ensure_catalog_writable()
-
     if not payload.ids:
         _admin_error(error_code="IDS_REQUIRED", message="ids is required")
     if len(payload.ids) > 500:
@@ -656,8 +482,6 @@ async def admin_patch_variant(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    _ensure_catalog_writable()
-
     variant = await db.get(ProductVariant, variant_id)
     if not variant:
         _admin_error(error_code="VARIANT_NOT_FOUND", message="Variant not found", status_code=404)
@@ -693,8 +517,6 @@ async def admin_quick_patch_product(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    _ensure_catalog_writable()
-
     product = await _get_product_or_404(db, product_id)
 
     if payload.price is not None and payload.price <= 0:
@@ -785,8 +607,6 @@ def _product_detail_response(product: Product) -> Dict[str, Any]:
         for av in v.attribute_values:
             if av.attribute and av.attribute_value:
                 attr_map[av.attribute.name] = av.attribute_value.value
-        if not attr_map:
-            attr_map = _extract_variant_attribute_map_from_payload(v.pancake_payload)
         profit = None
         margin_percent = None
         if v.cost_price is not None and v.price is not None:
@@ -797,9 +617,6 @@ def _product_detail_response(product: Product) -> Dict[str, Any]:
             {
                 "id": v.id,
                 "sku": v.sku,
-                "pancake_variation_id": v.pancake_variation_id,
-                "pancake_payload": v.pancake_payload,
-                "pancake_overview": _extract_pancake_variant_overview(v),
                 "price": v.price,
                 "compare_price": v.compare_price,
                 "cost_price": v.cost_price,
@@ -822,9 +639,6 @@ def _product_detail_response(product: Product) -> Dict[str, Any]:
         "slug": product.slug,
         "short_description": product.short_description,
         "description": product.description,
-        "pancake_product_id": product.pancake_product_id,
-        "pancake_payload": product.pancake_payload,
-        "pancake_overview": _extract_pancake_overview(product),
         "price": product.price,
         "original_price": product.original_price,
         "sale_price": product.sale_price,
@@ -864,8 +678,6 @@ async def admin_create_product(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    _ensure_catalog_writable()
-
     try:
         _validate_create_payload(payload)
 
@@ -988,9 +800,6 @@ async def admin_update_product(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    if settings.PANCAKE_CATALOG_READ_ONLY and not _is_seo_only_update(payload):
-        _ensure_catalog_writable()
-
     try:
         product = await _get_product_or_404(db, product_id)
 
@@ -1026,9 +835,6 @@ async def admin_update_product(
 
         if payload.status is not None:
             product.is_active = (payload.status == "active")
-
-        if payload.slug is not None or payload.seo_slug is not None or payload.meta_title is not None or payload.meta_description is not None:
-            _merge_seo_overrides_into_product_payload(product, payload)
 
         # Sync media (replace)
         if payload.media is not None:
@@ -1200,8 +1006,6 @@ async def admin_soft_delete_product(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    _ensure_catalog_writable()
-
     product = await _get_product_or_404(db, product_id)
     product.deleted_at = datetime.utcnow()
     product.is_active = False
@@ -1218,8 +1022,6 @@ async def admin_bulk_update_variants(
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
-    _ensure_catalog_writable()
-
     if not payload.variant_ids:
         _admin_error(error_code="VARIANT_IDS_REQUIRED", message="variant_ids is required")
     if len(payload.variant_ids) > 200:
@@ -1268,82 +1070,3 @@ async def admin_generate_variants(
         variants.append({"attribute_values": attribute_values})
 
     return {"variants": variants}
-
-
-@router.post("/sync/pancake")
-async def admin_sync_products_from_pancake(
-    max_pages: int = Query(10, ge=1, le=200),
-    page_size: int = Query(settings.PANCAKE_PRODUCT_SYNC_PAGE_SIZE, ge=1, le=200),
-    db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-):
-    try:
-        result = await pancake_product_sync_service.sync(
-            db=db,
-            max_pages=max_pages,
-            page_size=page_size,
-        )
-        await db.commit()
-        return result
-    except PancakeProductSyncError as exc:
-        await db.rollback()
-        _admin_error(
-            error_code="PANCAKE_SYNC_FAILED",
-            message=str(exc),
-            status_code=status.HTTP_502_BAD_GATEWAY,
-        )
-    except Exception as exc:
-        await db.rollback()
-        _admin_error(
-            error_code="PANCAKE_SYNC_UNEXPECTED_ERROR",
-            message=f"Unexpected Pancake sync error: {exc}",
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-        )
-
-
-@router.post("/sync/pancake/auto")
-async def admin_sync_products_from_pancake_auto(
-    max_pages: int = Query(10, ge=1, le=200),
-    page_size: int = Query(settings.PANCAKE_PRODUCT_SYNC_PAGE_SIZE, ge=1, le=200),
-    authorization: Optional[str] = Header(default=None),
-    db: AsyncSession = Depends(get_db),
-):
-    cron_secret = str(settings.CRON_SECRET or "").strip()
-    if not cron_secret:
-        _admin_error(
-            error_code="CRON_SECRET_MISSING",
-            message="CRON_SECRET is not configured",
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-        )
-
-    bearer = str(authorization or "").strip()
-    expected = f"Bearer {cron_secret}"
-    if bearer != expected:
-        _admin_error(
-            error_code="UNAUTHORIZED_CRON",
-            message="Invalid cron authorization",
-            status_code=status.HTTP_401_UNAUTHORIZED,
-        )
-
-    try:
-        result = await pancake_product_sync_service.sync(
-            db=db,
-            max_pages=max_pages,
-            page_size=page_size,
-        )
-        await db.commit()
-        return result
-    except PancakeProductSyncError as exc:
-        await db.rollback()
-        _admin_error(
-            error_code="PANCAKE_SYNC_FAILED",
-            message=str(exc),
-            status_code=status.HTTP_502_BAD_GATEWAY,
-        )
-    except Exception as exc:
-        await db.rollback()
-        _admin_error(
-            error_code="PANCAKE_SYNC_UNEXPECTED_ERROR",
-            message=f"Unexpected Pancake sync error: {exc}",
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-        )
