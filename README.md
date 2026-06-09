@@ -1,6 +1,6 @@
 ﻿# LocSang API
 
-This is a well-structured FastAPI backend project for Lá»™c Sang.
+This is a well-structured FastAPI backend project for Lộc Sang.
 
 ## Contact email notifications
 
@@ -19,7 +19,7 @@ Set these environment variables to enable SMTP sending:
 - `SMTP_USE_TLS=true` (common for port 587)
 - `SMTP_USE_SSL=false` (set `true` for providers using SSL, often port 465)
 - `SMTP_FROM_EMAIL=<from_email>` (optional, fallback to `SMTP_USERNAME`)
-- `SMTP_FROM_NAME=Lá»™c Sang` (optional)
+- `SMTP_FROM_NAME=Lộc Sang` (optional)
 - `CONTACT_NOTIFICATION_TO_EMAIL=<admin1@example.com,admin2@example.com>` (optional, comma-separated)
 - `CONTACT_SEND_AUTO_REPLY=true` (optional)
 

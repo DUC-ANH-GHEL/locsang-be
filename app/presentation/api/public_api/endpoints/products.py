@@ -833,7 +833,7 @@ async def create_product_review(
     if eligible_order_id is None:
         raise HTTPException(
             status_code=403,
-            detail='Chá»‰ khÃ¡ch Ä‘Ã£ mua sáº£n pháº©m vÃ  nháº­n hÃ ng má»›i Ä‘Æ°á»£c Ä‘Ã¡nh giÃ¡',
+            detail='Chỉ khách đã mua sản phẩm và nhận hàng mới được đánh giá',
         )
 
     review = ProductReview(

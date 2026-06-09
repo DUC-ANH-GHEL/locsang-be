@@ -560,7 +560,7 @@ def _order_to_response(order: Order) -> AccountOrderResponse:
     for item in order.items or []:
         product = getattr(item, "product", None)
         variant = getattr(item, "variant", None)
-        product_name = str(getattr(product, "name", "") or f"Sáº£n pháº©m #{item.product_id}")
+        product_name = str(getattr(product, "name", "") or f"Sản phẩm #{item.product_id}")
         variant_label = " / ".join(
             [
                 str(part).strip()
