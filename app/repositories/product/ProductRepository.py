@@ -1,4 +1,4 @@
-from app.domain.models.product import Product, ProductImage, ProductSpec
+from app.domain.models.product import Product, ProductImage
 from app.infrastructure.repositories.base import BaseRepository
 from sqlalchemy.ext.asyncio import AsyncSession
 from typing import List, Optional
@@ -22,11 +22,15 @@ class ProductRepository(BaseRepository[Product]):
             ))
 
     async def AddProductSpecs(self, db: AsyncSession, product_id: int, specs: List[dict]):
-        for spec in specs:
-            db.add(ProductSpec(
-                product_id=product_id,
-                label=spec["key"],
-                value=spec["value"]
-            ))
+        product = await db.get(Product, product_id)
+        if product:
+            product.specifications = [
+                {
+                    "label": str(spec.get("label") or spec.get("key") or "").strip(),
+                    "value": str(spec.get("value") or "").strip(),
+                }
+                for spec in specs
+                if str(spec.get("label") or spec.get("key") or "").strip() and str(spec.get("value") or "").strip()
+            ]
 
 productRepository = ProductRepository()

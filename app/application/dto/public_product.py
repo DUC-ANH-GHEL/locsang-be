@@ -25,6 +25,11 @@ class ProductImageItem(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
 
+class ProductSpecificationItem(BaseModel):
+    label: str
+    value: str
+
+
 class ProductVariantItem(BaseModel):
     id: str
     sku: str
@@ -174,6 +179,7 @@ class PublicProductDetail(PublicProductItem):
     has_variants: bool = Field(default=False, alias="hasVariants")
     featured: bool = False
     tags: List[str] = Field(default_factory=list)
+    specifications: List[ProductSpecificationItem] = Field(default_factory=list)
     images: List[ProductImageItem] = Field(default_factory=list)
     variants: List[ProductVariantItem] = Field(default_factory=list)
     combo_offers: List[ProductComboOffer] = Field(default_factory=list, alias="comboOffers")

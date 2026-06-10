@@ -1,6 +1,6 @@
 from sqlalchemy.future import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from app.domain.models.product import Product, ProductImage, ProductSpec
+from app.domain.models.product import Product, ProductImage
 from typing import List, Optional
 import string
 from app.infrastructure.repositories.product_repository import ProductRepository

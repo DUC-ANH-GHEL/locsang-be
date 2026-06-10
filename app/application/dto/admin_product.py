@@ -22,6 +22,11 @@ class MediaItemDTO(BaseModel):
     sort_order: int = 0
 
 
+class ProductSpecificationDTO(BaseModel):
+    label: str
+    value: str
+
+
 class AttributeDTO(BaseModel):
     id: Optional[int] = None
     name: str
@@ -63,6 +68,7 @@ class AdminProductCreateBody(BaseModel):
     pet_type: Optional[str] = None
     season: Optional[str] = None
     tags: List[str] = Field(default_factory=list)
+    specifications: List[ProductSpecificationDTO] = Field(default_factory=list)
 
     has_variants: bool = True
 
@@ -89,6 +95,7 @@ class AdminProductUpdateBody(BaseModel):
     pet_type: Optional[str] = None
     season: Optional[str] = None
     tags: Optional[List[str]] = None
+    specifications: Optional[List[ProductSpecificationDTO]] = None
 
     has_variants: Optional[bool] = None
 

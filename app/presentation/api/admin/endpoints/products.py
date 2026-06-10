@@ -4,7 +4,8 @@ import itertools
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+import cloudinary.uploader
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
 from sqlalchemy import Select, case, delete, func, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -37,6 +38,25 @@ from app.core.admin_api_error import AdminAPIError
 router = APIRouter()
 
 
+def _normalize_specifications(raw_specs: Optional[Sequence[Any]]) -> List[Dict[str, str]]:
+    if not raw_specs:
+        return []
+
+    specs: List[Dict[str, str]] = []
+    for item in raw_specs:
+        label = str(getattr(item, "label", "") or "").strip()
+        value = str(getattr(item, "value", "") or "").strip()
+        if not label and not value:
+            continue
+        if not label or not value:
+            _admin_error(error_code="SPECIFICATION_INVALID", message="Thông số kỹ thuật cần đủ tên và giá trị")
+        specs.append({"label": label[:120], "value": value[:240]})
+
+    if len(specs) > 40:
+        _admin_error(error_code="SPECIFICATION_LIMIT", message="Tối đa 40 thông số kỹ thuật cho một sản phẩm")
+    return specs
+
+
 def _parse_bool(raw: Optional[str]) -> Optional[bool]:
     if raw is None:
         return None
@@ -64,6 +84,8 @@ async def _refresh_product_aggregates(db: AsyncSession, product_id: int) -> None
         prices = [v.price for v in variants if v.price is not None]
         if prices:
             product.price = float(min(prices))
+        compare_prices = [v.compare_price for v in variants if v.compare_price is not None]
+        product.original_price = float(min(compare_prices)) if compare_prices else None
         product.stock = int(sum([v.stock or 0 for v in variants]))
         product.sku = variants[0].sku
     product.updated_at = datetime.utcnow()
@@ -413,6 +435,12 @@ def _validate_create_payload(payload: AdminProductCreateBody) -> None:
         seen.add(v.sku)
         if v.price is None or v.price <= 0:
             _admin_error(error_code="PRICE_INVALID", message="variant.price must be > 0")
+        if v.compare_price is not None and v.compare_price < v.price:
+            _admin_error(error_code="COMPARE_PRICE_INVALID", message="Giá niêm yết phải lớn hơn hoặc bằng giá bán")
+        if v.cost_price is not None and v.cost_price < 0:
+            _admin_error(error_code="COST_PRICE_INVALID", message="Giá vốn không được âm")
+        if v.stock is None or int(v.stock) < 0:
+            _admin_error(error_code="STOCK_INVALID", message="Tồn kho không được âm")
 
 
 @router.patch("/bulk")
@@ -658,6 +686,7 @@ def _product_detail_response(product: Product) -> Dict[str, Any]:
         "season": product.season,
         "affiliate": product.affiliate,
         "tags": product.tags or [],
+        "specifications": product.specifications or [],
         "has_variants": product.has_variants,
         "created_at": product.created_at,
         "updated_at": product.updated_at,
@@ -671,6 +700,42 @@ def _product_detail_response(product: Product) -> Dict[str, Any]:
         "attributes": attributes,
         "variants": variants,
     }
+
+
+@router.post("/upload-image")
+async def admin_upload_product_image(
+    file: UploadFile = File(...),
+    current_user: User = Depends(get_current_user),
+):
+    content_type = (file.content_type or "").lower()
+    if not content_type.startswith("image/"):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="File tải lên phải là ảnh.")
+
+    data = await file.read()
+    if not data:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="File ảnh rỗng.")
+
+    max_size = 10 * 1024 * 1024
+    if len(data) > max_size:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Ảnh vượt quá 10MB. Vui lòng chọn ảnh nhỏ hơn.")
+
+    try:
+        result = cloudinary.uploader.upload(
+            data,
+            folder="products",
+            resource_type="image",
+            overwrite=False,
+            use_filename=True,
+        )
+        secure_url = (result or {}).get("secure_url")
+        public_id = (result or {}).get("public_id")
+        if not secure_url:
+            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Upload ảnh thất bại, không nhận được URL.")
+        return {"success": True, "url": secure_url, "public_id": public_id}
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Upload ảnh thất bại: {exc}") from exc
 
 
 @router.post("", status_code=status.HTTP_201_CREATED)
@@ -703,6 +768,7 @@ async def admin_create_product(
                 pet_type=payload.pet_type,
                 season=payload.season,
                 tags=payload.tags,
+                specifications=_normalize_specifications(payload.specifications),
                 has_variants=payload.has_variants,
                 weight=payload.shipping.weight,
                 length=payload.shipping.length,
@@ -713,6 +779,8 @@ async def admin_create_product(
 
             # Back-compat fields (required by current schema)
             product.price = min([v.price for v in payload.variants])
+            compare_prices = [v.compare_price for v in payload.variants if v.compare_price is not None]
+            product.original_price = min(compare_prices) if compare_prices else None
             product.sku = payload.variants[0].sku
             product.stock = sum([v.stock for v in payload.variants])
 
@@ -835,6 +903,9 @@ async def admin_update_product(
         if payload.tags is not None:
             product.tags = payload.tags
 
+        if payload.specifications is not None:
+            product.specifications = _normalize_specifications(payload.specifications)
+
         if payload.shipping is not None:
             product.weight = payload.shipping.weight
             product.length = payload.shipping.length
@@ -929,6 +1000,12 @@ async def admin_update_product(
                 seen.add(v.sku)
                 if v.price is None or v.price <= 0:
                     _admin_error(error_code="PRICE_INVALID", message="variant.price must be > 0")
+                if v.compare_price is not None and v.compare_price < v.price:
+                    _admin_error(error_code="COMPARE_PRICE_INVALID", message="Giá niêm yết phải lớn hơn hoặc bằng giá bán")
+                if v.cost_price is not None and v.cost_price < 0:
+                    _admin_error(error_code="COST_PRICE_INVALID", message="Giá vốn không được âm")
+                if v.stock is None or int(v.stock) < 0:
+                    _admin_error(error_code="STOCK_INVALID", message="Tồn kho không được âm")
 
             incoming_skus = [v.sku for v in payload.variants]
             exclude_ids = [v.id for v in payload.variants if v.id]
@@ -980,6 +1057,8 @@ async def admin_update_product(
             )).scalars().all()
             if refreshed_variants:
                 product.price = min([rv.price or 0 for rv in refreshed_variants])
+                compare_prices = [rv.compare_price for rv in refreshed_variants if rv.compare_price is not None]
+                product.original_price = min(compare_prices) if compare_prices else None
                 product.sku = refreshed_variants[0].sku
                 product.stock = sum([rv.stock for rv in refreshed_variants])
 

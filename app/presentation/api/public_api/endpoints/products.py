@@ -407,6 +407,17 @@ def _product_to_detail(
     else:
         tags = []
 
+    specifications = []
+    specs_raw = getattr(product, "specifications", None)
+    if isinstance(specs_raw, list):
+        for item in specs_raw:
+            if not isinstance(item, dict):
+                continue
+            label = str(item.get("label") or item.get("key") or item.get("name") or "").strip()
+            value = str(item.get("value") or "").strip()
+            if label and value:
+                specifications.append({"label": label, "value": value})
+
     review_entities = [
         r
         for r in sorted(
@@ -443,6 +454,7 @@ def _product_to_detail(
         hasVariants=bool(getattr(product, "has_variants", False)),
         featured=bool(getattr(product, "featured", False)),
         tags=tags,
+        specifications=specifications,
         images=images,
         variants=variants,
         comboOffers=[],

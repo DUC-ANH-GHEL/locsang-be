@@ -22,7 +22,6 @@ __all__ = [
     "Role",
     "Category",
     "Product",
-    "ProductSpec",
     "ProductImage",
     "ProductReview",
     "Order",

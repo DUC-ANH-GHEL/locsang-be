@@ -35,6 +35,7 @@ class Product(Base):
     status = Column(String, nullable=False, default="active")
     featured = Column(Boolean, nullable=False, default=False)
     tags = Column(JSONB, nullable=True)
+    specifications = Column(JSONB, nullable=True)
     has_variants = Column(Boolean, nullable=False, default=True)
     deleted_at = Column(DateTime, nullable=True)
 
