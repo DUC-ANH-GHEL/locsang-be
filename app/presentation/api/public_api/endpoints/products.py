@@ -325,6 +325,7 @@ def _product_to_item(
         slug=str(getattr(product, "slug", None) or f"product-{product.id}"),
         price=float(_to_float(getattr(product, "price", None)) or 0.0),
         originalPrice=_to_float(getattr(product, "original_price", None)),
+        salePrice=_to_float(getattr(product, "sale_price", None)),
         thumbnail=thumbnail,
         stock=int(_to_int(getattr(product, "stock", None)) or 0),
         status=_normalize_status(product),

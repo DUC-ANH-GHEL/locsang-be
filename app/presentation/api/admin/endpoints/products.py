@@ -86,6 +86,8 @@ async def _refresh_product_aggregates(db: AsyncSession, product_id: int) -> None
             product.price = float(min(prices))
         compare_prices = [v.compare_price for v in variants if v.compare_price is not None]
         product.original_price = float(min(compare_prices)) if compare_prices else None
+        sale_prices = [v.sale_price for v in variants if v.sale_price is not None]
+        product.sale_price = float(min(sale_prices)) if sale_prices else None
         product.stock = int(sum([v.stock or 0 for v in variants]))
         product.sku = variants[0].sku
     product.updated_at = datetime.utcnow()
@@ -435,8 +437,10 @@ def _validate_create_payload(payload: AdminProductCreateBody) -> None:
         seen.add(v.sku)
         if v.price is None or v.price <= 0:
             _admin_error(error_code="PRICE_INVALID", message="variant.price must be > 0")
+        if v.sale_price is not None and (v.sale_price <= 0 or v.sale_price > v.price):
+            _admin_error(error_code="SALE_PRICE_INVALID", message="Giá sale phải lớn hơn 0 và không vượt giá bán")
         if v.compare_price is not None and v.compare_price < v.price:
-            _admin_error(error_code="COMPARE_PRICE_INVALID", message="Giá niêm yết phải lớn hơn hoặc bằng giá bán")
+            _admin_error(error_code="COMPARE_PRICE_INVALID", message="Giá gốc phải lớn hơn hoặc bằng giá bán")
         if v.cost_price is not None and v.cost_price < 0:
             _admin_error(error_code="COST_PRICE_INVALID", message="Giá vốn không được âm")
         if v.stock is None or int(v.stock) < 0:
@@ -647,6 +651,7 @@ def _product_detail_response(product: Product) -> Dict[str, Any]:
                 "id": v.id,
                 "sku": v.sku,
                 "price": v.price,
+                "sale_price": v.sale_price,
                 "compare_price": v.compare_price,
                 "cost_price": v.cost_price,
                 "stock": v.stock,
@@ -781,6 +786,8 @@ async def admin_create_product(
             product.price = min([v.price for v in payload.variants])
             compare_prices = [v.compare_price for v in payload.variants if v.compare_price is not None]
             product.original_price = min(compare_prices) if compare_prices else None
+            sale_prices = [v.sale_price for v in payload.variants if v.sale_price is not None]
+            product.sale_price = min(sale_prices) if sale_prices else None
             product.sku = payload.variants[0].sku
             product.stock = sum([v.stock for v in payload.variants])
 
@@ -821,6 +828,7 @@ async def admin_create_product(
                     product_id=product.id,
                     sku=v.sku,
                     price=v.price,
+                    sale_price=v.sale_price,
                     compare_price=v.compare_price,
                     cost_price=v.cost_price,
                     stock=v.stock,
@@ -1000,8 +1008,10 @@ async def admin_update_product(
                 seen.add(v.sku)
                 if v.price is None or v.price <= 0:
                     _admin_error(error_code="PRICE_INVALID", message="variant.price must be > 0")
+                if v.sale_price is not None and (v.sale_price <= 0 or v.sale_price > v.price):
+                    _admin_error(error_code="SALE_PRICE_INVALID", message="Giá sale phải lớn hơn 0 và không vượt giá bán")
                 if v.compare_price is not None and v.compare_price < v.price:
-                    _admin_error(error_code="COMPARE_PRICE_INVALID", message="Giá niêm yết phải lớn hơn hoặc bằng giá bán")
+                    _admin_error(error_code="COMPARE_PRICE_INVALID", message="Giá gốc phải lớn hơn hoặc bằng giá bán")
                 if v.cost_price is not None and v.cost_price < 0:
                     _admin_error(error_code="COST_PRICE_INVALID", message="Giá vốn không được âm")
                 if v.stock is None or int(v.stock) < 0:
@@ -1027,6 +1037,7 @@ async def admin_update_product(
 
                 variant.sku = v.sku
                 variant.price = v.price
+                variant.sale_price = v.sale_price
                 variant.compare_price = v.compare_price
                 variant.cost_price = v.cost_price
                 variant.stock = v.stock
@@ -1059,6 +1070,8 @@ async def admin_update_product(
                 product.price = min([rv.price or 0 for rv in refreshed_variants])
                 compare_prices = [rv.compare_price for rv in refreshed_variants if rv.compare_price is not None]
                 product.original_price = min(compare_prices) if compare_prices else None
+                sale_prices = [rv.sale_price for rv in refreshed_variants if rv.sale_price is not None]
+                product.sale_price = min(sale_prices) if sale_prices else None
                 product.sku = refreshed_variants[0].sku
                 product.stock = sum([rv.stock for rv in refreshed_variants])
 

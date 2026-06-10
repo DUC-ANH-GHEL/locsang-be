@@ -38,6 +38,7 @@ class VariantDTO(BaseModel):
 
     sku: str
     price: float
+    sale_price: Optional[float] = None
     compare_price: Optional[float] = None
     cost_price: Optional[float] = None
 

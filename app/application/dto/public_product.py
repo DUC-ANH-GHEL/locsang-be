@@ -148,6 +148,7 @@ class PublicProductItem(BaseModel):
     slug: str
     price: float
     original_price: Optional[float] = Field(default=None, alias="originalPrice")
+    sale_price: Optional[float] = Field(default=None, alias="salePrice")
     thumbnail: Optional[str] = None
     stock: int
     status: ProductStatus
