@@ -61,7 +61,6 @@ class ShippingInfoCreate(BaseModel):
 
 class OrderCreate(BaseModel):
     items: List[OrderItemCreate]
-    # shipping_info: ShippingInfoCreate
     payment_method: str
     note: Optional[str] = None
     receiver_name: str

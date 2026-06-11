@@ -9,13 +9,6 @@ ProductStatus = Literal["active", "inactive", "draft", "discontinued"]
 MediaType = Literal["image", "video"]
 
 
-class ShippingDTO(BaseModel):
-    weight: float = 0
-    length: float = 0
-    width: float = 0
-    height: float = 0
-
-
 class MediaItemDTO(BaseModel):
     url: str
     type: MediaType = "image"
@@ -40,8 +33,6 @@ class VariantDTO(BaseModel):
     sku: str
     price: float
     sale_price: Optional[float] = None
-    compare_price: Optional[float] = None
-    cost_price: Optional[float] = None
 
     stock: int = 0
     manage_stock: bool = True
@@ -67,14 +58,11 @@ class AdminProductCreateBody(BaseModel):
 
     category_id: int
     brand: Optional[str] = None
-    pet_type: Optional[str] = None
-    season: Optional[str] = None
     tags: List[str] = Field(default_factory=list)
     specifications: List[ProductSpecificationDTO] = Field(default_factory=list)
 
     has_variants: bool = True
 
-    shipping: ShippingDTO = Field(default_factory=ShippingDTO)
     media: List[MediaItemDTO] = Field(default_factory=list)
     attributes: List[AttributeDTO] = Field(default_factory=list)
     variants: List[VariantDTO] = Field(default_factory=list)
@@ -94,14 +82,11 @@ class AdminProductUpdateBody(BaseModel):
 
     category_id: Optional[int] = None
     brand: Optional[str] = None
-    pet_type: Optional[str] = None
-    season: Optional[str] = None
     tags: Optional[List[str]] = None
     specifications: Optional[List[ProductSpecificationDTO]] = None
 
     has_variants: Optional[bool] = None
 
-    shipping: Optional[ShippingDTO] = None
     media: Optional[List[MediaItemDTO]] = None
     attributes: Optional[List[AttributeDTO]] = None
     variants: Optional[List[VariantDTO]] = None
@@ -119,7 +104,7 @@ class GenerateVariantsBody(BaseModel):
     attributes: List[AttributeDTO] = Field(default_factory=list)
 
 
-BulkProductAction = Literal["status", "delete", "category", "affiliate"]
+BulkProductAction = Literal["status", "delete", "category"]
 
 
 class AdminBulkProductsBody(BaseModel):
@@ -130,19 +115,16 @@ class AdminBulkProductsBody(BaseModel):
 
 class AdminVariantPatchBody(BaseModel):
     price: Optional[float] = None
-    cost_price: Optional[float] = None
     stock: Optional[int] = None
     status: Optional[ProductStatus] = None
 
 
 class AdminProductQuickPatchBody(BaseModel):
     price: Optional[float] = None
-    cost_price: Optional[float] = None
     stock: Optional[int] = None
     status: Optional[ProductStatus] = None
     featured: Optional[bool] = None
     category_id: Optional[int] = None
-    affiliate: Optional[int] = None
 
 
 class ProductUploadCleanupBody(BaseModel):

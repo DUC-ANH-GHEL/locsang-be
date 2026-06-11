@@ -17,10 +17,10 @@ from app.domain.models.user import User
 
 router = APIRouter()
 ORDER_STATUS_NEW = "pending"
-ORDER_STATUS_PROCESSED = "processing"
+ORDER_STATUS_PROCESSED = "processed"
 ORDER_STATUS_CANCELLED = "cancelled"
 LOCAL_ORDER_STATUSES = {ORDER_STATUS_NEW, ORDER_STATUS_PROCESSED, ORDER_STATUS_CANCELLED}
-LEGACY_PROCESSED_STATUSES = {"shipped", "delivered"}
+LEGACY_PROCESSED_STATUSES = {"processing", "shipped", "delivered"}
 
 
 def _normalize_status(value: object) -> str:

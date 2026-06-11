@@ -8,7 +8,7 @@ import cloudinary.uploader
 
 
 _CLOUDINARY_HOST_PART = "res.cloudinary.com"
-_ALLOWED_PREFIXES = ("tips", "customer-stories", "home-content")
+_ALLOWED_PREFIXES = ("home-content", "product-images", "products")
 
 
 def _is_cloudinary_url(url: str) -> bool:

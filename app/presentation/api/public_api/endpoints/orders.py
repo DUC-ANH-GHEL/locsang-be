@@ -42,8 +42,8 @@ def _normalize_phone(value: object) -> str:
 def _order_status_text(value: object) -> str:
     raw = getattr(value, "value", value)
     normalized = str(raw or "pending").strip().lower()
-    if normalized in {"processing", "shipped", "delivered"}:
-        return "processing"
+    if normalized in {"processed", "processing", "shipped", "delivered"}:
+        return "processed"
     if normalized == "cancelled":
         return "cancelled"
     return "pending"
@@ -52,8 +52,7 @@ def _order_status_text(value: object) -> str:
 def _variant_label(variant: Optional[ProductVariant]) -> str:
     if variant is None:
         return ""
-    parts = [variant.sku, variant.size, variant.color, variant.material]
-    return " / ".join([str(part).strip() for part in parts if str(part or "").strip()])
+    return str(getattr(variant, "sku", "") or "").strip()
 
 
 def _to_order_response(order: Order) -> PublicOrderResponseData:

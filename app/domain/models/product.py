@@ -40,26 +40,14 @@ class Product(Base):
     deleted_at = Column(DateTime, nullable=True)
 
     price = Column(Float, nullable=False)
-    original_price = Column(Float, nullable=True)
     sale_price = Column(Float, nullable=True)
     thumbnail = Column(String, nullable=True)
     currency = Column(String, nullable=False, default="VND")
     sku = Column(String, unique=True, index=True)
     is_active = Column(Boolean, default=True)
-    affiliate = Column(Integer, nullable=True)
     stock = Column(Integer, nullable=False, default=0)
 
-    # Clothing-specific attributes (optional)
     brand = Column(String, nullable=True)
-    material = Column(String, nullable=True)
-    size = Column(String, nullable=True)
-    color = Column(String, nullable=True)
-    pet_type = Column(String, nullable=True)
-    season = Column(String, nullable=True)
-    height = Column(Float, nullable=True)
-    width = Column(Float, nullable=True)
-    length = Column(Float, nullable=True)
-    weight = Column(Float, nullable=True)
     category_id = Column(Integer)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
@@ -87,13 +75,6 @@ class Product(Base):
         lazy="selectin",
     )
 
-    reviews = relationship(
-        "ProductReview",
-        back_populates="product",
-        cascade="all, delete-orphan",
-        lazy="selectin",
-    )
-
 
 class ProductVariant(Base):
     __tablename__ = "product_variants"
@@ -102,14 +83,9 @@ class ProductVariant(Base):
     product_id = Column(Integer, ForeignKey("products.id", ondelete="CASCADE"), nullable=False, index=True)
 
     sku = Column(String, nullable=False, unique=True, index=True)
-    size = Column(String, nullable=True)
-    color = Column(String, nullable=True)
-    material = Column(String, nullable=True)
 
     price = Column(Float, nullable=True)
     sale_price = Column(Float, nullable=True)
-    compare_price = Column(Float, nullable=True)
-    cost_price = Column(Float, nullable=True)
     stock = Column(Integer, nullable=False, default=0)
     manage_stock = Column(Boolean, nullable=False, default=True)
     allow_backorder = Column(Boolean, nullable=False, default=False)

@@ -12,23 +12,16 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.application.dto.public_product import (
-    CreateProductReviewBody,
     CreateProductBody,
     ListProductsResponse,
     ProductDetailResponse,
-    ProductReviewItem,
-    ProductReviewsResponse,
-    ProductReviewSummary,
     PublicProductDetail,
     PublicProductItem,
     UpdateProductBody,
 )
 from app.core.deps import get_db
 from app.domain.models.category import Category
-from app.domain.models.order import Order, OrderStatus
-from app.domain.models.order_item import OrderItem
 from app.domain.models.product import Product, ProductImage, ProductVariant
-from app.domain.models.product_review import ProductReview
 
 
 router = APIRouter(prefix="/products", tags=["Public Products"])
@@ -151,47 +144,6 @@ def _to_int(v, default: Optional[int] = None) -> Optional[int]:
         return int(v)
     except Exception:
         return default
-
-
-def _datetime_sort_key(value) -> str:
-    if value is None:
-        return ""
-    try:
-        return value.isoformat()
-    except Exception:
-        return str(value)
-
-
-def _reviews_to_summary(reviews: list[ProductReview]) -> ProductReviewSummary:
-    active = [r for r in (reviews or []) if bool(getattr(r, "is_active", True))]
-    count = len(active)
-    if count == 0:
-        return ProductReviewSummary(average=0.0, count=0, breakdown={"1": 0, "2": 0, "3": 0, "4": 0, "5": 0})
-
-    total = sum(int(getattr(r, "rating", 0) or 0) for r in active)
-    breakdown = {str(i): 0 for i in range(1, 6)}
-    for r in active:
-        rating = int(getattr(r, "rating", 0) or 0)
-        if 1 <= rating <= 5:
-            breakdown[str(rating)] += 1
-
-    average = round(total / count, 2)
-    return ProductReviewSummary(average=average, count=count, breakdown=breakdown)
-
-
-def _review_to_item(review: ProductReview) -> ProductReviewItem:
-    rating_raw = _to_int(getattr(review, "rating", None))
-    rating = 0 if rating_raw is None else max(1, min(5, rating_raw))
-    created_at = getattr(review, "created_at", None) or getattr(review, "updated_at", None) or datetime.now(timezone.utc)
-
-    return ProductReviewItem(
-        id=str(review.id),
-        reviewerName=str(getattr(review, "reviewer_name", None) or "Khach hang"),
-        rating=rating,
-        comment=review.comment,
-        isVerifiedPurchase=bool(getattr(review, "is_verified_purchase", False)),
-        createdAt=created_at,
-    )
 
 
 def _extract_variant_attribute_map(payload: object) -> dict[str, str]:
@@ -352,11 +304,7 @@ def _product_purchase_state(product: Product) -> dict[str, object]:
     }
 
 
-def _product_to_item(
-    product: Product,
-    category: Category,
-    rating_summary: Optional[ProductReviewSummary] = None,
-) -> PublicProductItem:
+def _product_to_item(product: Product, category: Category) -> PublicProductItem:
     thumbnail = _resolve_storefront_thumbnail(product)
     created_at = getattr(product, "created_at", None) or datetime.now(timezone.utc)
     updated_at = getattr(product, "updated_at", None) or created_at
@@ -367,7 +315,6 @@ def _product_to_item(
         name=str(getattr(product, "name", None) or f"Product {product.id}"),
         slug=str(getattr(product, "slug", None) or f"product-{product.id}"),
         price=float(_to_float(getattr(product, "price", None)) or 0.0),
-        originalPrice=_to_float(getattr(product, "original_price", None)),
         salePrice=_to_float(getattr(product, "sale_price", None)),
         thumbnail=thumbnail,
         stock=int(purchase_state["stock"]),
@@ -376,7 +323,6 @@ def _product_to_item(
         stockStatus=str(purchase_state["stock_status"]),
         status=_normalize_status(product),
         category={"id": str(category.id), "name": str(getattr(category, "name", None) or "Danh muc")},
-        ratingSummary=(rating_summary or ProductReviewSummary()).model_dump(),
         createdAt=created_at,
         updatedAt=updated_at,
     )
@@ -405,32 +351,15 @@ def _product_to_detail(
     variants = []
     for v in sorted(product.variants or [], key=lambda x: x.id):
         payload: dict[str, Any] = {}
-        fallback_attr_values = {
-            k: str(val)
-            for k, val in {
-                "Size": getattr(v, "size", None),
-                "Color": getattr(v, "color", None),
-                "Material": getattr(v, "material", None),
-            }.items()
-            if val is not None and str(val).strip() != ""
-        }
-        attribute_values = _extract_variant_attribute_map(payload) or fallback_attr_values
+        attribute_values = _extract_variant_attribute_map(payload)
         media_urls, video_urls = _extract_variant_media(payload, getattr(v, "image_url", None))
-        dimension_text = None
-        if isinstance(payload, dict):
-            dimension_text = str(payload.get("dimension_text") or payload.get("dimension") or "").strip() or None
 
         variants.append(
             {
                 "id": str(v.id),
                 "sku": str(getattr(v, "sku", None) or f"VAR-{v.id}"),
-                "size": getattr(v, "size", None),
-                "color": getattr(v, "color", None),
-                "material": getattr(v, "material", None),
                 "price": _to_float(getattr(v, "price", None)),
                 "salePrice": _to_float(getattr(v, "sale_price", None)),
-                "comparePrice": _to_float(getattr(v, "compare_price", None)),
-                "costPrice": _to_float(getattr(v, "cost_price", None)),
                 "stock": int(getattr(v, "stock", 0) or 0),
                 "manageStock": bool(getattr(v, "manage_stock", True)),
                 "allowBackorder": bool(getattr(v, "allow_backorder", False)),
@@ -442,8 +371,6 @@ def _product_to_detail(
                 "variantName": _build_variant_name(attribute_values, getattr(v, "sku", None)),
                 "mediaUrls": media_urls,
                 "videoUrls": video_urls,
-                "weightGram": _to_float(payload.get("weight") if isinstance(payload, dict) else None),
-                "dimensionText": dimension_text,
             }
         )
 
@@ -466,20 +393,7 @@ def _product_to_detail(
             if label and value:
                 specifications.append({"label": label, "value": value})
 
-    review_entities = [
-        r
-        for r in sorted(
-            product.reviews or [],
-            key=lambda x: _datetime_sort_key(getattr(x, "created_at", None) or getattr(x, "updated_at", None)),
-            reverse=True,
-        )
-        if bool(getattr(r, "is_active", True))
-    ]
-    review_items = [_review_to_item(r) for r in review_entities]
-    summary = _reviews_to_summary(review_entities)
-
     detail_base = _product_to_item(product, category).model_dump(by_alias=True)
-    detail_base["ratingSummary"] = summary.model_dump()
     detail_base["salePrice"] = _to_float(getattr(product, "sale_price", None))
 
     return PublicProductDetail(
@@ -488,26 +402,13 @@ def _product_to_detail(
         description=getattr(product, "description", None),
         currency=getattr(product, "currency", "VND"),
         sku=getattr(product, "sku", None),
-        affiliate=_to_int(getattr(product, "affiliate", None)),
         brand=getattr(product, "brand", None),
-        material=getattr(product, "material", None),
-        size=getattr(product, "size", None),
-        color=getattr(product, "color", None),
-        petType=getattr(product, "pet_type", None),
-        season=getattr(product, "season", None),
-        weight=_to_float(getattr(product, "weight", None)),
-        length=_to_float(getattr(product, "length", None)),
-        width=_to_float(getattr(product, "width", None)),
-        height=_to_float(getattr(product, "height", None)),
         hasVariants=bool(getattr(product, "has_variants", False)),
         featured=bool(getattr(product, "featured", False)),
         tags=tags,
         specifications=specifications,
         images=images,
         variants=variants,
-        comboOffers=[],
-        promotionOffers=[],
-        reviews=[r.model_dump(by_alias=True) for r in review_items],
     )
 
 
@@ -618,67 +519,7 @@ async def list_products(
 
         rows = (await db.execute(stmt)).all()
 
-        product_ids = [int(prod.id) for prod, _cat in rows if getattr(prod, "id", None) is not None]
-        summary_by_product_id: dict[int, ProductReviewSummary] = {
-            pid: ProductReviewSummary(average=0.0, count=0, breakdown={"1": 0, "2": 0, "3": 0, "4": 0, "5": 0})
-            for pid in product_ids
-        }
-
-        if product_ids:
-            agg_stmt = (
-                select(
-                    ProductReview.product_id,
-                    func.avg(ProductReview.rating),
-                    func.count(ProductReview.id),
-                )
-                .where(
-                    ProductReview.product_id.in_(product_ids),
-                    ProductReview.is_active.is_(True),
-                )
-                .group_by(ProductReview.product_id)
-            )
-            agg_rows = (await db.execute(agg_stmt)).all()
-
-            for product_id, avg_raw, count_raw in agg_rows:
-                pid = int(product_id)
-                summary = summary_by_product_id.get(pid)
-                if not summary:
-                    continue
-                summary.average = round(float(avg_raw or 0), 2)
-                summary.count = int(count_raw or 0)
-
-            breakdown_stmt = (
-                select(
-                    ProductReview.product_id,
-                    ProductReview.rating,
-                    func.count(ProductReview.id),
-                )
-                .where(
-                    ProductReview.product_id.in_(product_ids),
-                    ProductReview.is_active.is_(True),
-                )
-                .group_by(ProductReview.product_id, ProductReview.rating)
-            )
-            breakdown_rows = (await db.execute(breakdown_stmt)).all()
-
-            for product_id, rating_raw, count_raw in breakdown_rows:
-                pid = int(product_id)
-                rating_i = int(rating_raw or 0)
-                if rating_i < 1 or rating_i > 5:
-                    continue
-                summary = summary_by_product_id.get(pid)
-                if not summary:
-                    continue
-                summary.breakdown[str(rating_i)] = int(count_raw or 0)
-
-        items = [
-            _product_to_item(
-                prod,
-                cat,
-                summary_by_product_id.get(int(prod.id)) if getattr(prod, "id", None) is not None else None,
-            )
-            for prod, cat in rows
-        ]
+        items = [_product_to_item(prod, cat) for prod, cat in rows]
 
         has_next = total_pages > 0 and page_i < total_pages
         has_prev = total_pages > 0 and page_i > 1
@@ -714,7 +555,7 @@ async def get_product_detail(
 
     stmt = (
         select(Product)
-        .options(selectinload(Product.images), selectinload(Product.variants), selectinload(Product.reviews))
+        .options(selectinload(Product.images), selectinload(Product.variants))
         .where(Product.id == product_id)
         .limit(1)
     )
@@ -752,7 +593,7 @@ async def create_product(
         slug=slug,
         description=body.description,
         price=float(body.price),
-        original_price=_to_float(body.original_price),
+        sale_price=_to_float(body.sale_price),
         thumbnail=body.thumbnail,
         category_id=category_id,
         stock=int(body.stock or 0),
@@ -782,7 +623,7 @@ async def create_product(
     product = (
         await db.execute(
             select(Product)
-            .options(selectinload(Product.images), selectinload(Product.variants), selectinload(Product.reviews))
+            .options(selectinload(Product.images), selectinload(Product.variants))
             .where(Product.id == product.id)
             .limit(1)
         )
@@ -826,8 +667,8 @@ async def update_product(
         product.description = body.description
     if body.price is not None:
         product.price = float(body.price)
-    if body.original_price is not None:
-        product.original_price = _to_float(body.original_price)
+    if body.sale_price is not None:
+        product.sale_price = _to_float(body.sale_price)
     if body.thumbnail is not None:
         product.thumbnail = body.thumbnail
     if body.stock is not None:
@@ -841,7 +682,7 @@ async def update_product(
     product = (
         await db.execute(
             select(Product)
-            .options(selectinload(Product.images), selectinload(Product.variants), selectinload(Product.reviews))
+            .options(selectinload(Product.images), selectinload(Product.variants))
             .where(Product.id == product_id)
             .limit(1)
         )
@@ -852,107 +693,6 @@ async def update_product(
 
     detail = _product_to_detail(product, category)
     return {"success": True, "data": detail.model_dump(by_alias=True)}
-
-
-@router.get("/{id}/reviews", response_model=ProductReviewsResponse)
-async def list_product_reviews(
-    id: str,
-    db: AsyncSession = Depends(get_db),
-):
-    product_id = _parse_int_id(id, "id")
-    if product_id is None:
-        raise HTTPException(status_code=400, detail="id is required")
-
-    product = (
-        await db.execute(
-            select(Product)
-            .options(selectinload(Product.reviews))
-            .where(Product.id == product_id)
-            .limit(1)
-        )
-    ).scalar_one_or_none()
-
-    if not product:
-        raise HTTPException(status_code=404, detail="Product not found")
-
-    review_entities = [r for r in sorted(product.reviews or [], key=lambda x: x.created_at, reverse=True) if bool(getattr(r, "is_active", True))]
-    review_items = [_review_to_item(r) for r in review_entities]
-    summary = _reviews_to_summary(review_entities)
-
-    return {
-        "success": True,
-        "data": [r.model_dump(by_alias=True) for r in review_items],
-        "summary": summary.model_dump(),
-    }
-
-
-@router.post("/{id}/reviews", response_model=ProductReviewsResponse, status_code=status.HTTP_201_CREATED)
-async def create_product_review(
-    id: str,
-    body: CreateProductReviewBody,
-    db: AsyncSession = Depends(get_db),
-):
-    product_id = _parse_int_id(id, "id")
-    if product_id is None:
-        raise HTTPException(status_code=400, detail="id is required")
-
-    product = await db.get(Product, product_id)
-    if not product:
-        raise HTTPException(status_code=404, detail="Product not found")
-
-    requested_phone = ''.join(ch for ch in str(body.phone or '') if ch.isdigit() or ch == '+')
-    tracking_code = str(body.tracking_code or '').strip()
-    if not tracking_code:
-        raise HTTPException(status_code=400, detail='trackingCode is required')
-
-    eligible_order_stmt = (
-        select(Order.id)
-        .join(OrderItem, OrderItem.order_id == Order.id)
-        .where(
-            Order.deleted_at.is_(None),
-            Order.status.in_([OrderStatus.PROCESSING.value, OrderStatus.SHIPPED.value, OrderStatus.DELIVERED.value]),
-            Order.tracking_code == tracking_code,
-            Order.receiver_phone == requested_phone,
-            OrderItem.product_id == product_id,
-        )
-        .limit(1)
-    )
-    eligible_order_id = (await db.execute(eligible_order_stmt)).scalar_one_or_none()
-    if eligible_order_id is None:
-        raise HTTPException(
-            status_code=403,
-            detail='Chỉ khách đã mua sản phẩm và nhận hàng mới được đánh giá',
-        )
-
-    review = ProductReview(
-        product_id=product_id,
-        reviewer_name=body.reviewer_name.strip(),
-        rating=int(body.rating),
-        comment=(body.comment.strip() if body.comment else None),
-        is_verified_purchase=True,
-        is_active=True,
-    )
-    db.add(review)
-    await db.commit()
-
-    product = (
-        await db.execute(
-            select(Product)
-            .options(selectinload(Product.reviews))
-            .where(Product.id == product_id)
-            .limit(1)
-        )
-    ).scalar_one()
-
-    review_entities = [r for r in sorted(product.reviews or [], key=lambda x: x.created_at, reverse=True) if bool(getattr(r, "is_active", True))]
-    review_items = [_review_to_item(r) for r in review_entities]
-    summary = _reviews_to_summary(review_entities)
-
-    return {
-        "success": True,
-        "data": [r.model_dump(by_alias=True) for r in review_items],
-        "summary": summary.model_dump(),
-    }
 
 
 @router.delete("/{id}", status_code=status.HTTP_200_OK)

@@ -29,14 +29,12 @@ def _default_home_payload() -> Dict[str, Any]:
         "hero_image_url": "/locsang-assets/hero-yanmar.svg",
         "primary_cta_text": "Mua ngay",
         "primary_cta_link": "/products",
-        "secondary_cta_text": "Liên hệ tư vấn",
-        "secondary_cta_link": "/contact",
+        "secondary_cta_text": "",
+        "secondary_cta_link": "",
         "header_brand_name": "Lộc Sang",
         "header_brand_tagline": "Phụ tùng và nhớt Yanmar chính hãng",
         "header_nav_shop_text": "Cửa hàng",
         "header_nav_new_arrivals_text": "Hàng mới về",
-        "header_nav_tips_text": "Cẩm nang",
-        "header_nav_shorts_text": "Lộc Sang Shorts",
         "header_nav_orders_text": "Đơn hàng",
         "footer_brand_name": "Lộc Sang",
         "footer_desktop_caption": "Phụ tùng và nhớt Yanmar chính hãng, quản lý trực tiếp bởi Lộc Sang.",
@@ -100,18 +98,10 @@ def _default_home_payload() -> Dict[str, Any]:
         "new_arrivals_empty_text": "Chưa có sản phẩm active để hiển thị.",
         "bottom_cta_title": "Cần tư vấn phụ tùng?",
         "bottom_cta_description": "Lộc Sang hỗ trợ chọn đúng mã phụ tùng, nhớt và lọc phù hợp.",
-        "bottom_cta_button_text": "Liên hệ ngay",
-        "bottom_cta_button_link": "/contact",
-        "shorts_section_title": "Lộc Sang Shorts",
-        "shorts_section_subtitle": "Lướt nhanh video sản phẩm mới nhất",
-        "shorts_section_link_text": "Xem Shorts",
-        "shorts_items": [],
-        "community_section_title": "Cộng Đồng #LocSang",
-        "community_section_subtitle": "Cập nhật hình ảnh sản phẩm và phản hồi khách hàng Lộc Sang.",
-        "testimonial_section_title": "Câu chuyện từ khách hàng",
+        "bottom_cta_button_text": "",
+        "bottom_cta_button_link": "",
         "delivery_feature_title": "Giao hàng nhanh",
         "delivery_feature_desc": "Đóng gói kỹ và giao theo thông tin đơn hàng trong hệ thống.",
-        "community_items": [],
     }
 
 
@@ -131,8 +121,6 @@ class HomeContentPayload(BaseModel):
     header_brand_tagline: str = Field(default="", max_length=240)
     header_nav_shop_text: str = Field(default="", max_length=80)
     header_nav_new_arrivals_text: str = Field(default="", max_length=80)
-    header_nav_tips_text: str = Field(default="", max_length=80)
-    header_nav_shorts_text: str = Field(default="", max_length=80)
     header_nav_orders_text: str = Field(default="", max_length=80)
     footer_brand_name: str = Field(default="", max_length=120)
     footer_desktop_caption: str = Field(default="", max_length=260)
@@ -198,16 +186,8 @@ class HomeContentPayload(BaseModel):
     bottom_cta_description: str = Field(default="", max_length=420)
     bottom_cta_button_text: str = Field(default="", max_length=80)
     bottom_cta_button_link: str = Field(default="", max_length=300)
-    shorts_section_title: str = Field(default="", max_length=180)
-    shorts_section_subtitle: str = Field(default="", max_length=420)
-    shorts_section_link_text: str = Field(default="", max_length=80)
-    shorts_items: list[dict[str, Any]] = Field(default_factory=list)
-    community_section_title: str = Field(default="", max_length=180)
-    community_section_subtitle: str = Field(default="", max_length=420)
-    testimonial_section_title: str = Field(default="", max_length=220)
     delivery_feature_title: str = Field(default="", max_length=140)
     delivery_feature_desc: str = Field(default="", max_length=320)
-    community_items: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class HomeContentReadResponse(BaseModel):

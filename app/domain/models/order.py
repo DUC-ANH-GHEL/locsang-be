@@ -14,9 +14,7 @@ from app.domain.models.order_item import OrderItem
 
 class OrderStatus(str, enum.Enum):
     PENDING = "pending"
-    PROCESSING = "processing"
-    SHIPPED = "shipped"
-    DELIVERED = "delivered"
+    PROCESSED = "processed"
     CANCELLED = "cancelled"
 
 class PaymentStatus(str, enum.Enum):

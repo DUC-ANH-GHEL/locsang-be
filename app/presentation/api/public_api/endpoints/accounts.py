@@ -557,8 +557,8 @@ async def update_account_me(
 
 def _order_status_text(value: object) -> str:
     raw = str(getattr(value, "value", value) or "pending").strip().lower()
-    if raw in {"shipped", "delivered", "processing"}:
-        return "processing"
+    if raw in {"processed", "shipped", "delivered", "processing"}:
+        return "processed"
     if raw == "cancelled":
         return "cancelled"
     return "pending"
@@ -570,18 +570,7 @@ def _order_to_response(order: Order) -> AccountOrderResponse:
         product = getattr(item, "product", None)
         variant = getattr(item, "variant", None)
         product_name = str(getattr(product, "name", "") or f"Sản phẩm #{item.product_id}")
-        variant_label = " / ".join(
-            [
-                str(part).strip()
-                for part in (
-                    getattr(variant, "sku", None),
-                    getattr(variant, "size", None),
-                    getattr(variant, "color", None),
-                    getattr(variant, "material", None),
-                )
-                if str(part or "").strip()
-            ]
-        )
+        variant_label = str(getattr(variant, "sku", "") or "").strip()
         if variant_label:
             product_name = f"{product_name} ({variant_label})"
 
@@ -683,7 +672,7 @@ async def cancel_my_order(
 
     current_status = _order_status_text(order.status)
 
-    if current_status == "processing":
+    if current_status == "processed":
         raise HTTPException(status_code=409, detail="Đơn hàng đã xử lý và không thể hủy")
 
     if current_status == "cancelled":

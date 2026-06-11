@@ -11,20 +11,13 @@ from app.core.config import settings  # để lấy DB URL từ settings
 from app.domain.models import Base
 from app.domain.models.category import Category
 from app.domain.models.product import Product, ProductImage
-from app.domain.models.product_review import ProductReview
-from app.domain.models.customer import Customer
 from app.domain.models.order import Order, OrderItem
-from app.domain.models.contact import Contact
 from app.domain.models.role import Role
 from app.domain.models.user import User
-from app.domain.models.shipping_config import ShippingConfig
-from app.domain.models.shipping_info import ShippingInfo
 from app.domain.models.home_content import HomeContent
-from app.domain.models.customer_story import CustomerStory
-from app.domain.models.tip_post import TipPost
-from app.domain.models.tip_category import TipCategory
 from app.domain.models.admin_notification import AdminNotification
 from app.domain.models.admin_push_subscription import AdminPushSubscription
+from app.domain.models.account_cart_item import AccountCartItem
 
 from alembic import context
 

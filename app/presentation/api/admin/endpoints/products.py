@@ -85,8 +85,6 @@ async def _refresh_product_aggregates(db: AsyncSession, product_id: int) -> None
         prices = [v.price for v in variants if v.price is not None]
         if prices:
             product.price = float(min(prices))
-        compare_prices = [v.compare_price for v in variants if v.compare_price is not None]
-        product.original_price = float(min(compare_prices)) if compare_prices else None
         sale_prices = [v.sale_price for v in variants if v.sale_price is not None]
         product.sale_price = float(min(sale_prices)) if sale_prices else None
         product.stock = int(sum([v.stock or 0 for v in variants]))
@@ -232,7 +230,6 @@ async def admin_list_products(
     stock_status: Optional[str] = None,
     min_price: Optional[str] = None,
     max_price: Optional[str] = None,
-    has_affiliate: Optional[str] = None,
     featured: Optional[str] = None,
     sort: Optional[str] = None,
     db: AsyncSession = Depends(get_db),
@@ -291,13 +288,6 @@ async def admin_list_products(
     hv = _parse_bool(has_variants)
     if hv is not None:
         filters.append(Product.has_variants.is_(hv))
-
-    ha = _parse_bool(has_affiliate)
-    if ha is not None:
-        if ha:
-            filters.append(Product.affiliate.is_not(None))
-        else:
-            filters.append(Product.affiliate.is_(None))
 
     ft = _parse_bool(featured)
     if ft is not None:
@@ -378,7 +368,6 @@ async def admin_list_products(
             "category_id": product.category_id,
             "category": None if not category else {"id": category.id, "name": category.name},
             "brand": product.brand,
-            "affiliate": product.affiliate,
             "featured": bool(product.featured),
             "has_variants": bool(product.has_variants),
             "created_at": product.created_at,
@@ -440,10 +429,6 @@ def _validate_create_payload(payload: AdminProductCreateBody) -> None:
             _admin_error(error_code="PRICE_INVALID", message="variant.price must be > 0")
         if v.sale_price is not None and (v.sale_price <= 0 or v.sale_price > v.price):
             _admin_error(error_code="SALE_PRICE_INVALID", message="Giá sale phải lớn hơn 0 và không vượt giá bán")
-        if v.compare_price is not None and v.compare_price < v.price:
-            _admin_error(error_code="COMPARE_PRICE_INVALID", message="Giá gốc phải lớn hơn hoặc bằng giá bán")
-        if v.cost_price is not None and v.cost_price < 0:
-            _admin_error(error_code="COST_PRICE_INVALID", message="Giá vốn không được âm")
         if v.stock is None:
             _admin_error(error_code="STOCK_INVALID", message="Tồn kho là bắt buộc")
         if int(v.stock) < 0 and not bool(v.allow_backorder):
@@ -492,10 +477,6 @@ async def admin_bulk_products(
                     if cid is None:
                         raise ValueError("category_id")
                     product.category_id = int(cid)
-                elif payload.action == "affiliate":
-                    aff = payload.data.get("affiliate")
-                    # allow null to clear
-                    product.affiliate = None if aff in (None, "") else int(aff)
                 elif payload.action == "delete":
                     product.deleted_at = datetime.utcnow()
                     product.is_active = False
@@ -524,15 +505,11 @@ async def admin_patch_variant(
 
     if payload.price is not None and payload.price <= 0:
         _admin_error(error_code="PRICE_INVALID", message="price must be > 0")
-    if payload.cost_price is not None and payload.cost_price < 0:
-        _admin_error(error_code="COST_PRICE_INVALID", message="cost_price must be >= 0")
     if payload.stock is not None and payload.stock < 0:
         _admin_error(error_code="STOCK_INVALID", message="stock must be >= 0")
 
     if payload.price is not None:
         variant.price = float(payload.price)
-    if payload.cost_price is not None:
-        variant.cost_price = float(payload.cost_price)
     if payload.stock is not None:
         variant.stock = int(payload.stock)
     if payload.status is not None:
@@ -557,8 +534,6 @@ async def admin_quick_patch_product(
 
     if payload.price is not None and payload.price <= 0:
         _admin_error(error_code="PRICE_INVALID", message="price must be > 0")
-    if payload.cost_price is not None and payload.cost_price < 0:
-        _admin_error(error_code="COST_PRICE_INVALID", message="cost_price must be >= 0")
     if payload.stock is not None and payload.stock < 0:
         _admin_error(error_code="STOCK_INVALID", message="stock must be >= 0")
 
@@ -569,8 +544,6 @@ async def admin_quick_patch_product(
         product.featured = bool(payload.featured)
     if payload.category_id is not None:
         product.category_id = int(payload.category_id)
-    if payload.affiliate is not None:
-        product.affiliate = payload.affiliate
 
     # If product has variants, price/stock live on variants; still allow override compat fields.
     if payload.price is not None:
@@ -643,20 +616,12 @@ def _product_detail_response(product: Product, category: Optional[Category] = No
         for av in v.attribute_values:
             if av.attribute and av.attribute_value:
                 attr_map[av.attribute.name] = av.attribute_value.value
-        profit = None
-        margin_percent = None
-        if v.cost_price is not None and v.price is not None:
-            profit = v.price - v.cost_price
-            if v.price > 0:
-                margin_percent = (profit / v.price) * 100
         variants.append(
             {
                 "id": v.id,
                 "sku": v.sku,
                 "price": v.price,
                 "sale_price": v.sale_price,
-                "compare_price": v.compare_price,
-                "cost_price": v.cost_price,
                 "stock": v.stock,
                 "manage_stock": v.manage_stock,
                 "allow_backorder": v.allow_backorder,
@@ -664,8 +629,6 @@ def _product_detail_response(product: Product, category: Optional[Category] = No
                 "attribute_values": attr_map,
                 "variant_name": _build_variant_name(attr_map, v.sku),
                 "image_url": v.image_url,
-                "profit": profit,
-                "margin_percent": margin_percent,
             }
         )
 
@@ -677,7 +640,6 @@ def _product_detail_response(product: Product, category: Optional[Category] = No
         "short_description": product.short_description,
         "description": product.description,
         "price": product.price,
-        "original_price": product.original_price,
         "sale_price": product.sale_price,
         "currency": product.currency,
         "stock": product.stock,
@@ -689,23 +651,11 @@ def _product_detail_response(product: Product, category: Optional[Category] = No
         "category_name": category.name if category else None,
         "category": {"id": category.id, "name": category.name} if category else None,
         "brand": product.brand,
-        "material": product.material,
-        "size": product.size,
-        "color": product.color,
-        "pet_type": product.pet_type,
-        "season": product.season,
-        "affiliate": product.affiliate,
         "tags": product.tags or [],
         "specifications": product.specifications or [],
         "has_variants": product.has_variants,
         "created_at": product.created_at,
         "updated_at": product.updated_at,
-        "shipping": {
-            "weight": product.weight or 0,
-            "length": product.length or 0,
-            "width": product.width or 0,
-            "height": product.height or 0,
-        },
         "media": media,
         "attributes": attributes,
         "variants": variants,
@@ -806,22 +756,13 @@ async def admin_create_product(
                 featured=payload.featured,
                 category_id=payload.category_id,
                 brand=payload.brand,
-                pet_type=payload.pet_type,
-                season=payload.season,
                 tags=payload.tags,
                 specifications=_normalize_specifications(payload.specifications),
                 has_variants=payload.has_variants,
-                weight=payload.shipping.weight,
-                length=payload.shipping.length,
-                width=payload.shipping.width,
-                height=payload.shipping.height,
                 is_active=(payload.status == "active"),
             )
 
-            # Back-compat fields (required by current schema)
             product.price = min([v.price for v in payload.variants])
-            compare_prices = [v.compare_price for v in payload.variants if v.compare_price is not None]
-            product.original_price = min(compare_prices) if compare_prices else None
             sale_prices = [v.sale_price for v in payload.variants if v.sale_price is not None]
             product.sale_price = min(sale_prices) if sale_prices else None
             product.sku = payload.variants[0].sku
@@ -866,8 +807,6 @@ async def admin_create_product(
                     sku=v.sku,
                     price=v.price,
                     sale_price=v.sale_price,
-                    compare_price=v.compare_price,
-                    cost_price=v.cost_price,
                     stock=v.stock,
                     manage_stock=v.manage_stock,
                     allow_backorder=v.allow_backorder,
@@ -937,8 +876,6 @@ async def admin_update_product(
             "featured",
             "category_id",
             "brand",
-            "pet_type",
-            "season",
             "has_variants",
         ]:
             val = getattr(payload, field)
@@ -950,12 +887,6 @@ async def admin_update_product(
 
         if payload.specifications is not None:
             product.specifications = _normalize_specifications(payload.specifications)
-
-        if payload.shipping is not None:
-            product.weight = payload.shipping.weight
-            product.length = payload.shipping.length
-            product.width = payload.shipping.width
-            product.height = payload.shipping.height
 
         if payload.status is not None:
             product.is_active = (payload.status == "active")
@@ -1048,10 +979,6 @@ async def admin_update_product(
                     _admin_error(error_code="PRICE_INVALID", message="variant.price must be > 0")
                 if v.sale_price is not None and (v.sale_price <= 0 or v.sale_price > v.price):
                     _admin_error(error_code="SALE_PRICE_INVALID", message="Giá sale phải lớn hơn 0 và không vượt giá bán")
-                if v.compare_price is not None and v.compare_price < v.price:
-                    _admin_error(error_code="COMPARE_PRICE_INVALID", message="Giá gốc phải lớn hơn hoặc bằng giá bán")
-                if v.cost_price is not None and v.cost_price < 0:
-                    _admin_error(error_code="COST_PRICE_INVALID", message="Giá vốn không được âm")
                 if v.stock is None:
                     _admin_error(error_code="STOCK_INVALID", message="Tồn kho là bắt buộc")
                 if int(v.stock) < 0 and not bool(v.allow_backorder):
@@ -1078,8 +1005,6 @@ async def admin_update_product(
                 variant.sku = v.sku
                 variant.price = v.price
                 variant.sale_price = v.sale_price
-                variant.compare_price = v.compare_price
-                variant.cost_price = v.cost_price
                 variant.stock = v.stock
                 variant.manage_stock = v.manage_stock
                 variant.allow_backorder = v.allow_backorder
@@ -1108,8 +1033,6 @@ async def admin_update_product(
             )).scalars().all()
             if refreshed_variants:
                 product.price = min([rv.price or 0 for rv in refreshed_variants])
-                compare_prices = [rv.compare_price for rv in refreshed_variants if rv.compare_price is not None]
-                product.original_price = min(compare_prices) if compare_prices else None
                 sale_prices = [rv.sale_price for rv in refreshed_variants if rv.sale_price is not None]
                 product.sale_price = min(sale_prices) if sale_prices else None
                 product.sku = refreshed_variants[0].sku
@@ -1179,9 +1102,8 @@ async def admin_bulk_update_variants(
 
     allowed_fields = {
         "price",
+        "sale_price",
         "stock",
-        "compare_price",
-        "cost_price",
         "status",
         "manage_stock",
         "allow_backorder",
