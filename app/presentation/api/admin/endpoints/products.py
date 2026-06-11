@@ -432,6 +432,52 @@ async def _skus_in_use(db: AsyncSession, skus: Sequence[str], *, exclude_variant
     return list(set(rows))
 
 
+async def _product_skus_in_use(
+    db: AsyncSession,
+    skus: Sequence[str],
+    *,
+    exclude_product_id: Optional[int] = None,
+) -> List[str]:
+    if not skus:
+        return []
+    stmt = select(Product.sku).where(Product.sku.in_(list(skus)))
+    if exclude_product_id is not None:
+        stmt = stmt.where(Product.id != exclude_product_id)
+    rows = (await db.execute(stmt)).scalars().all()
+    return list(set(rows))
+
+
+def _copy_variant_with_id(variant: Any, variant_id: int) -> Any:
+    if hasattr(variant, "model_copy"):
+        return variant.model_copy(update={"id": variant_id})
+    return variant.copy(update={"id": variant_id})
+
+
+async def _attach_existing_default_variant(
+    db: AsyncSession,
+    product_id: int,
+    payload: AdminProductUpdateBody,
+) -> None:
+    if payload.variants is None or len(payload.variants) != 1 or payload.variants[0].id:
+        return
+
+    variant_ids = (
+        await db.execute(
+            select(ProductVariant.id)
+            .where(ProductVariant.product_id == product_id)
+            .order_by(ProductVariant.id.asc())
+            .limit(2)
+        )
+    ).scalars().all()
+    if len(variant_ids) != 1:
+        return
+
+    default_variant_id = int(variant_ids[0])
+    payload.variants[0] = _copy_variant_with_id(payload.variants[0], default_variant_id)
+    if payload.deleted_variant_ids:
+        payload.deleted_variant_ids = [vid for vid in payload.deleted_variant_ids if int(vid) != default_variant_id]
+
+
 def _validate_create_payload(payload: AdminProductCreateBody) -> None:
     if not payload.name:
         _admin_error(error_code="NAME_REQUIRED", message="name is required")
@@ -764,6 +810,13 @@ async def admin_create_product(
             _admin_error(error_code="SLUG_DUPLICATE", message="Slug already exists", status_code=status.HTTP_409_CONFLICT)
 
         skus = [v.sku for v in payload.variants]
+        existing_product_skus = await _product_skus_in_use(db, skus)
+        if existing_product_skus:
+            _admin_error(
+                error_code="SKU_DUPLICATE",
+                message=f"SKU already exists: {existing_product_skus[0]}",
+                status_code=status.HTTP_409_CONFLICT,
+            )
         existing = await _skus_in_use(db, skus)
         if existing:
             _admin_error(error_code="SKU_DUPLICATE", message=f"SKU already exists: {existing[0]}", status_code=status.HTTP_409_CONFLICT)
@@ -915,6 +968,9 @@ async def admin_update_product(
         if payload.status is not None:
             product.is_active = (payload.status == "active")
 
+        if payload.variants is not None:
+            await _attach_existing_default_variant(db, product.id, payload)
+
         # Sync media (replace)
         if payload.media is not None:
             await db.execute(delete(ProductImage).where(ProductImage.product_id == product.id))
@@ -1010,6 +1066,13 @@ async def admin_update_product(
 
             incoming_skus = [v.sku for v in payload.variants]
             exclude_ids = [v.id for v in payload.variants if v.id]
+            existing_product_skus = await _product_skus_in_use(db, incoming_skus, exclude_product_id=product.id)
+            if existing_product_skus:
+                _admin_error(
+                    error_code="SKU_DUPLICATE",
+                    message=f"SKU already exists: {existing_product_skus[0]}",
+                    status_code=status.HTTP_409_CONFLICT,
+                )
             existing = await _skus_in_use(db, incoming_skus, exclude_variant_ids=exclude_ids)
             if existing:
                 _admin_error(error_code="SKU_DUPLICATE", message=f"SKU already exists: {existing[0]}", status_code=status.HTTP_409_CONFLICT)
