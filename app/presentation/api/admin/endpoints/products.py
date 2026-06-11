@@ -393,19 +393,30 @@ def _raise_duplicate_integrity_error(exc: IntegrityError) -> None:
     constraint = str(getattr(diag, "constraint_name", "") or "").lower()
     detail = str(getattr(diag, "message_detail", "") or orig or exc).lower()
     signal = f"{constraint} {detail}"
+    is_unique_error = any(
+        marker in signal
+        for marker in ("uniqueviolation", "duplicate key", "unique constraint", "already exists")
+    )
 
-    if "slug" in signal:
+    if is_unique_error and "slug" in signal:
         _admin_error(
             error_code="SLUG_DUPLICATE",
             message="Slug đã tồn tại. Vui lòng đổi tên sản phẩm để tạo slug khác.",
             status_code=status.HTTP_409_CONFLICT,
         )
 
-    if "sku" in signal:
+    if is_unique_error and "sku" in signal:
         _admin_error(
             error_code="SKU_DUPLICATE",
             message="SKU đã tồn tại. Vui lòng dùng mã phụ tùng khác.",
             status_code=status.HTTP_409_CONFLICT,
+        )
+
+    if any(marker in signal for marker in ("notnullviolation", "not-null constraint", "null value in column")):
+        _admin_error(
+            error_code="PRODUCT_INVALID",
+            message="Thiếu dữ liệu bắt buộc của sản phẩm. Vui lòng kiểm tra lại SKU, giá và tồn kho.",
+            status_code=status.HTTP_400_BAD_REQUEST,
         )
 
     _admin_error(
@@ -1087,7 +1098,6 @@ async def admin_update_product(
                 else:
                     variant = ProductVariant(product_id=product.id)
                     db.add(variant)
-                    await db.flush()
 
                 variant.sku = v.sku
                 variant.price = v.price
@@ -1098,6 +1108,7 @@ async def admin_update_product(
                 variant.status = v.status
                 variant.is_active = (v.status == "active")
                 variant.image_url = v.image_url
+                await db.flush()
 
                 # Replace mappings
                 await db.execute(delete(VariantAttributeValue).where(VariantAttributeValue.variant_id == variant.id))
