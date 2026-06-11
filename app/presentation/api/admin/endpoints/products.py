@@ -619,7 +619,7 @@ async def _load_attribute_value_lookup(db: AsyncSession, product_id: int) -> tup
     return attribute_by_name, value_id_by_pair
 
 
-def _product_detail_response(product: Product) -> Dict[str, Any]:
+def _product_detail_response(product: Product, category: Optional[Category] = None) -> Dict[str, Any]:
     media = [
         {"url": m.url, "type": getattr(m, "type", "image"), "sort_order": m.sort_order, "public_id": m.public_id}
         for m in sorted(product.images, key=lambda x: x.sort_order)
@@ -684,6 +684,8 @@ def _product_detail_response(product: Product) -> Dict[str, Any]:
         "is_active": product.is_active,
         "featured": product.featured,
         "category_id": product.category_id,
+        "category_name": category.name if category else None,
+        "category": {"id": category.id, "name": category.name} if category else None,
         "brand": product.brand,
         "material": product.material,
         "size": product.size,
@@ -1138,7 +1140,10 @@ async def admin_get_product_detail(
     current_user: User = Depends(get_current_user),
 ):
     product = await _get_product_or_404(db, product_id)
-    return _product_detail_response(product)
+    category = None
+    if product.category_id:
+        category = await db.get(Category, product.category_id)
+    return _product_detail_response(product, category)
 
 
 @router.delete("/{product_id}")
