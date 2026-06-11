@@ -555,6 +555,15 @@ async def update_account_me(
     return _to_profile(current_user)
 
 
+def _order_status_text(value: object) -> str:
+    raw = str(getattr(value, "value", value) or "pending").strip().lower()
+    if raw in {"shipped", "delivered", "processing"}:
+        return "processing"
+    if raw == "cancelled":
+        return "cancelled"
+    return "pending"
+
+
 def _order_to_response(order: Order) -> AccountOrderResponse:
     items: list[AccountOrderItemResponse] = []
     for item in order.items or []:
@@ -591,7 +600,7 @@ def _order_to_response(order: Order) -> AccountOrderResponse:
     return AccountOrderResponse(
         id=int(order.id),
         tracking_code=order.tracking_code,
-        status=str(getattr(order.status, "value", order.status) or "pending"),
+        status=_order_status_text(order.status),
         payment_status=str(order.payment_status or "pending"),
         payment_method=str(order.payment_method or "cod"),
         receiver_name=order.receiver_name,
@@ -672,10 +681,10 @@ async def cancel_my_order(
     if order is None:
         raise HTTPException(status_code=404, detail="Order not found")
 
-    current_status = str(order.status or "").strip().lower()
+    current_status = _order_status_text(order.status)
 
-    if current_status in {"shipped", "delivered"}:
-        raise HTTPException(status_code=409, detail="Order is already shipping/delivered and cannot be cancelled")
+    if current_status == "processing":
+        raise HTTPException(status_code=409, detail="Đơn hàng đã xử lý và không thể hủy")
 
     if current_status == "cancelled":
         return AccountOrderActionResponse(success=True, data=_order_to_response(order))

@@ -910,7 +910,7 @@ async def create_product_review(
         .join(OrderItem, OrderItem.order_id == Order.id)
         .where(
             Order.deleted_at.is_(None),
-            Order.status == OrderStatus.DELIVERED.value,
+            Order.status.in_([OrderStatus.PROCESSING.value, OrderStatus.SHIPPED.value, OrderStatus.DELIVERED.value]),
             Order.tracking_code == tracking_code,
             Order.receiver_phone == requested_phone,
             OrderItem.product_id == product_id,

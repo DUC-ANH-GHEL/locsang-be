@@ -16,19 +16,28 @@ from app.domain.models.user import User
 
 
 router = APIRouter()
-LOCAL_ORDER_STATUSES = {"pending", "processing", "shipped", "delivered", "cancelled"}
+ORDER_STATUS_NEW = "pending"
+ORDER_STATUS_PROCESSED = "processing"
+ORDER_STATUS_CANCELLED = "cancelled"
+LOCAL_ORDER_STATUSES = {ORDER_STATUS_NEW, ORDER_STATUS_PROCESSED, ORDER_STATUS_CANCELLED}
+LEGACY_PROCESSED_STATUSES = {"shipped", "delivered"}
 
 
 def _normalize_status(value: object) -> str:
     if value is None:
-        return "pending"
+        return ORDER_STATUS_NEW
     raw = getattr(value, "value", value)
-    return str(raw).strip().lower() or "pending"
+    normalized = str(raw).strip().lower()
+    if normalized in LEGACY_PROCESSED_STATUSES:
+        return ORDER_STATUS_PROCESSED
+    return normalized if normalized in LOCAL_ORDER_STATUSES else ORDER_STATUS_NEW
 
 
 def _coerce_order_status(value: object) -> str:
     normalized = _normalize_status(value)
-    return normalized if normalized in LOCAL_ORDER_STATUSES else "pending"
+    if normalized not in LOCAL_ORDER_STATUSES:
+        raise HTTPException(status_code=400, detail="Invalid order status")
+    return normalized
 
 
 def _to_order_summary(order: Order) -> dict:
@@ -90,7 +99,11 @@ async def admin_list_orders(
         filters.append(or_(Order.tracking_code.ilike(q), Order.receiver_phone.ilike(q)))
 
     if status_q and status_q.strip():
-        filters.append(func.lower(func.cast(Order.status, String)) == status_q.strip().lower())
+        normalized_status = _coerce_order_status(status_q)
+        if normalized_status == ORDER_STATUS_PROCESSED:
+            filters.append(func.lower(func.cast(Order.status, String)).in_([ORDER_STATUS_PROCESSED, *LEGACY_PROCESSED_STATUSES]))
+        else:
+            filters.append(func.lower(func.cast(Order.status, String)) == normalized_status)
 
     if payment_status and payment_status.strip():
         filters.append(func.lower(Order.payment_status) == payment_status.strip().lower())
@@ -167,9 +180,6 @@ async def admin_bulk_orders(
 
         if action == "status":
             next_status = _coerce_order_status(body.status)
-            if next_status not in LOCAL_ORDER_STATUSES:
-                failed.append({"id": oid, "reason": "INVALID_STATUS"})
-                continue
             order.status = next_status
             order.updated_at = now
             updated += 1
