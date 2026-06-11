@@ -188,9 +188,6 @@ async def create_public_order(
             )
 
             display_name = str(getattr(product, "name", "") or f"Sản phẩm #{product.id}").strip()
-            label = _variant_label(selected_variant)
-            if label:
-                display_name = f"{display_name} ({label})"
             email_items.append({"name": display_name, "quantity": quantity, "unit_price": unit_price, "subtotal": subtotal})
 
         order = Order(
