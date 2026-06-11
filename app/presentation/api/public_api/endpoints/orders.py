@@ -104,7 +104,11 @@ async def create_public_order(
 
     try:
         product_ids = sorted({int(item.product_id) for item in body.items})
-        products_rows = await db.execute(select(Product).where(Product.id.in_(product_ids)))
+        products_rows = await db.execute(
+            select(Product)
+            .options(selectinload(Product.variants))
+            .where(Product.id.in_(product_ids))
+        )
         products = {int(p.id): p for p in products_rows.scalars().all()}
 
         variant_ids = sorted({int(item.product_variant_id) for item in body.items if item.product_variant_id is not None})
@@ -144,17 +148,39 @@ async def create_public_order(
                 if manage_stock:
                     selected_variant.stock = available_stock - quantity
             else:
-                available_stock = int(getattr(product, "stock", 0) or 0)
-                if quantity > available_stock:
-                    raise HTTPException(status_code=400, detail=f"Not enough stock for product {product.id}")
-                product.stock = available_stock - quantity
+                all_variants = list(product.variants or [])
+                active_variants = [
+                    variant
+                    for variant in all_variants
+                    if bool(getattr(variant, "is_active", True))
+                    and str(getattr(variant, "status", "active") or "active") == "active"
+                ]
+                if len(active_variants) == 1:
+                    selected_variant = active_variants[0]
+                    unit_price = float(getattr(selected_variant, "sale_price", None) or getattr(selected_variant, "price", None) or unit_price)
+                    manage_stock = bool(getattr(selected_variant, "manage_stock", True))
+                    allow_backorder = bool(getattr(selected_variant, "allow_backorder", False))
+                    available_stock = int(getattr(selected_variant, "stock", 0) or 0)
+                    if manage_stock and not allow_backorder and quantity > available_stock:
+                        raise HTTPException(status_code=400, detail=f"Not enough stock for product {product.id}")
+                    if manage_stock:
+                        selected_variant.stock = available_stock - quantity
+                elif len(active_variants) > 1:
+                    raise HTTPException(status_code=400, detail=f"Please choose a variant for product {product.id}")
+                elif all_variants:
+                    raise HTTPException(status_code=400, detail=f"Product {product.id} is not available")
+                else:
+                    available_stock = int(getattr(product, "stock", 0) or 0)
+                    if quantity > available_stock:
+                        raise HTTPException(status_code=400, detail=f"Not enough stock for product {product.id}")
+                    product.stock = available_stock - quantity
 
             subtotal = round(unit_price * quantity, 2)
             total_amount += subtotal
             order_items.append(
                 OrderItem(
                     product_id=int(product.id),
-                    product_variant_id=int(item.product_variant_id) if item.product_variant_id is not None else None,
+                    product_variant_id=int(selected_variant.id) if selected_variant is not None else None,
                     quantity=quantity,
                     price=unit_price,
                     total=subtotal,

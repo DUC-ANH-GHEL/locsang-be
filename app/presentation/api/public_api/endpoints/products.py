@@ -7,7 +7,7 @@ from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import JSONResponse
-from sqlalchemy import func, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -27,7 +27,7 @@ from app.core.deps import get_db
 from app.domain.models.category import Category
 from app.domain.models.order import Order, OrderStatus
 from app.domain.models.order_item import OrderItem
-from app.domain.models.product import Product, ProductImage
+from app.domain.models.product import Product, ProductImage, ProductVariant
 from app.domain.models.product_review import ProductReview
 
 
@@ -310,6 +310,48 @@ def _resolve_storefront_thumbnail(product: Product) -> Optional[str]:
     return None
 
 
+def _is_variant_active(variant: ProductVariant) -> bool:
+    return bool(getattr(variant, "is_active", True)) and str(getattr(variant, "status", "active") or "active") == "active"
+
+
+def _active_variants(product: Product) -> list[ProductVariant]:
+    return [variant for variant in (product.variants or []) if _is_variant_active(variant)]
+
+
+def _variant_can_purchase(variant: ProductVariant) -> bool:
+    manage_stock = bool(getattr(variant, "manage_stock", True))
+    if not manage_stock:
+        return True
+    return int(getattr(variant, "stock", 0) or 0) > 0 or bool(getattr(variant, "allow_backorder", False))
+
+
+def _product_purchase_state(product: Product) -> dict[str, object]:
+    all_variants = list(product.variants or [])
+    variants = _active_variants(product)
+    if all_variants:
+        stock = int(sum(int(getattr(variant, "stock", 0) or 0) for variant in variants))
+        allow_backorder = any(bool(getattr(variant, "allow_backorder", False)) for variant in variants)
+        can_purchase = any(_variant_can_purchase(variant) for variant in variants)
+    else:
+        stock = int(_to_int(getattr(product, "stock", None)) or 0)
+        allow_backorder = False
+        can_purchase = stock > 0
+
+    if stock > 0:
+        stock_status = "in_stock"
+    elif allow_backorder and can_purchase:
+        stock_status = "backorder"
+    else:
+        stock_status = "out"
+
+    return {
+        "stock": stock,
+        "allow_backorder": allow_backorder,
+        "can_purchase": can_purchase,
+        "stock_status": stock_status,
+    }
+
+
 def _product_to_item(
     product: Product,
     category: Category,
@@ -318,6 +360,7 @@ def _product_to_item(
     thumbnail = _resolve_storefront_thumbnail(product)
     created_at = getattr(product, "created_at", None) or datetime.now(timezone.utc)
     updated_at = getattr(product, "updated_at", None) or created_at
+    purchase_state = _product_purchase_state(product)
 
     return PublicProductItem(
         id=str(product.id),
@@ -327,7 +370,10 @@ def _product_to_item(
         originalPrice=_to_float(getattr(product, "original_price", None)),
         salePrice=_to_float(getattr(product, "sale_price", None)),
         thumbnail=thumbnail,
-        stock=int(_to_int(getattr(product, "stock", None)) or 0),
+        stock=int(purchase_state["stock"]),
+        allowBackorder=bool(purchase_state["allow_backorder"]),
+        canPurchase=bool(purchase_state["can_purchase"]),
+        stockStatus=str(purchase_state["stock_status"]),
         status=_normalize_status(product),
         category={"id": str(category.id), "name": str(getattr(category, "name", None) or "Danh muc")},
         ratingSummary=(rating_summary or ProductReviewSummary()).model_dump(),
@@ -388,6 +434,7 @@ def _product_to_detail(
                 "stock": int(getattr(v, "stock", 0) or 0),
                 "manageStock": bool(getattr(v, "manage_stock", True)),
                 "allowBackorder": bool(getattr(v, "allow_backorder", False)),
+                "canPurchase": _is_variant_active(v) and _variant_can_purchase(v),
                 "status": str(getattr(v, "status", "active") or "active"),
                 "isActive": bool(getattr(v, "is_active", True)),
                 "imageUrl": getattr(v, "image_url", None),
@@ -475,6 +522,7 @@ async def list_products(
     status_q: Optional[str] = Query("active", alias="status"),
     sortBy: Optional[str] = Query("createdAt"),
     order: Optional[str] = Query("desc"),
+    purchasable: Optional[str] = Query("true"),
     db: AsyncSession = Depends(get_db),
 ):
     try:
@@ -499,6 +547,7 @@ async def list_products(
             raise ValueError("order")
         if status_q not in ("active", "inactive"):
             raise ValueError("status")
+        purchasable_only = str(purchasable or "true").strip().lower() not in ("0", "false", "no", "all")
 
         category_id = _parse_int_id(categoryId, "categoryId")
 
@@ -518,6 +567,28 @@ async def list_products(
 
         # status filter: spec requires `status`
         filters.append(Product.status == status_q)
+        if purchasable_only:
+            purchasable_variant_exists = (
+                select(ProductVariant.id)
+                .where(
+                    ProductVariant.product_id == Product.id,
+                    ProductVariant.is_active.is_(True),
+                    ProductVariant.status == "active",
+                    or_(
+                        ProductVariant.manage_stock.is_(False),
+                        ProductVariant.stock > 0,
+                        ProductVariant.allow_backorder.is_(True),
+                    ),
+                )
+                .exists()
+            )
+            any_variant_exists = select(ProductVariant.id).where(ProductVariant.product_id == Product.id).exists()
+            filters.append(
+                or_(
+                    purchasable_variant_exists,
+                    and_(~any_variant_exists, Product.stock > 0),
+                )
+            )
 
         sort_map = {
             "createdAt": Product.created_at,
@@ -527,7 +598,11 @@ async def list_products(
         sort_col = sort_map[sortBy]
         order_by = sort_col.asc() if order == "asc" else sort_col.desc()
 
-        base_stmt = select(Product, Category).join(Category, Product.category_id == Category.id)
+        base_stmt = (
+            select(Product, Category)
+            .join(Category, Product.category_id == Category.id)
+            .options(selectinload(Product.images), selectinload(Product.variants))
+        )
         if filters:
             base_stmt = base_stmt.where(*filters)
 

@@ -43,6 +43,7 @@ class ProductVariantItem(BaseModel):
     stock: int = 0
     manage_stock: bool = Field(default=True, alias="manageStock")
     allow_backorder: bool = Field(default=False, alias="allowBackorder")
+    can_purchase: bool = Field(default=False, alias="canPurchase")
     status: str = "active"
     is_active: bool = Field(default=True, alias="isActive")
     image_url: Optional[str] = Field(default=None, alias="imageUrl")
@@ -151,6 +152,9 @@ class PublicProductItem(BaseModel):
     sale_price: Optional[float] = Field(default=None, alias="salePrice")
     thumbnail: Optional[str] = None
     stock: int
+    allow_backorder: bool = Field(default=False, alias="allowBackorder")
+    can_purchase: bool = Field(default=False, alias="canPurchase")
+    stock_status: str = Field(default="out", alias="stockStatus")
     status: ProductStatus
     category: CategoryRef
     rating_summary: ProductReviewSummary = Field(default_factory=ProductReviewSummary, alias="ratingSummary")

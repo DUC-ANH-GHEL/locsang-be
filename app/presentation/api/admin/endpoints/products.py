@@ -444,8 +444,10 @@ def _validate_create_payload(payload: AdminProductCreateBody) -> None:
             _admin_error(error_code="COMPARE_PRICE_INVALID", message="Giá gốc phải lớn hơn hoặc bằng giá bán")
         if v.cost_price is not None and v.cost_price < 0:
             _admin_error(error_code="COST_PRICE_INVALID", message="Giá vốn không được âm")
-        if v.stock is None or int(v.stock) < 0:
-            _admin_error(error_code="STOCK_INVALID", message="Tồn kho không được âm")
+        if v.stock is None:
+            _admin_error(error_code="STOCK_INVALID", message="Tồn kho là bắt buộc")
+        if int(v.stock) < 0 and not bool(v.allow_backorder):
+            _admin_error(error_code="STOCK_INVALID", message="Tồn kho âm chỉ hợp lệ khi bật cho phép bán khi hết hàng")
 
 
 @router.patch("/bulk")
@@ -1050,8 +1052,10 @@ async def admin_update_product(
                     _admin_error(error_code="COMPARE_PRICE_INVALID", message="Giá gốc phải lớn hơn hoặc bằng giá bán")
                 if v.cost_price is not None and v.cost_price < 0:
                     _admin_error(error_code="COST_PRICE_INVALID", message="Giá vốn không được âm")
-                if v.stock is None or int(v.stock) < 0:
-                    _admin_error(error_code="STOCK_INVALID", message="Tồn kho không được âm")
+                if v.stock is None:
+                    _admin_error(error_code="STOCK_INVALID", message="Tồn kho là bắt buộc")
+                if int(v.stock) < 0 and not bool(v.allow_backorder):
+                    _admin_error(error_code="STOCK_INVALID", message="Tồn kho âm chỉ hợp lệ khi bật cho phép bán khi hết hàng")
 
             incoming_skus = [v.sku for v in payload.variants]
             exclude_ids = [v.id for v in payload.variants if v.id]
