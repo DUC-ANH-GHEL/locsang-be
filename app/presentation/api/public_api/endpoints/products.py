@@ -480,13 +480,13 @@ def _product_to_detail(
 
     detail_base = _product_to_item(product, category).model_dump(by_alias=True)
     detail_base["ratingSummary"] = summary.model_dump()
+    detail_base["salePrice"] = _to_float(getattr(product, "sale_price", None))
 
     return PublicProductDetail(
         **detail_base,
         shortDescription=getattr(product, "short_description", None),
         description=getattr(product, "description", None),
         currency=getattr(product, "currency", "VND"),
-        salePrice=_to_float(getattr(product, "sale_price", None)),
         sku=getattr(product, "sku", None),
         affiliate=_to_int(getattr(product, "affiliate", None)),
         brand=getattr(product, "brand", None),
