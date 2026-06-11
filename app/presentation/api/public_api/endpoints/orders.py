@@ -217,6 +217,7 @@ async def create_public_order(
             tracking_code=str(created_order.tracking_code or ""),
             receiver_name=str(body.receiver_name or ""),
             total_amount=round(total_amount, 2),
+            product_names=[str(item.get("name") or "") for item in email_items],
         )
 
         return {"success": True, "data": _to_order_response(created_order).model_dump(by_alias=True)}

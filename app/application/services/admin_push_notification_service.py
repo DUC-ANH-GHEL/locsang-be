@@ -97,6 +97,15 @@ def _send_web_push(subscription_info: dict[str, Any], payload: dict[str, Any]) -
     )
 
 
+def _build_order_item_summary(product_names: list[str] | None) -> str:
+    names = [str(name or "").strip() for name in (product_names or []) if str(name or "").strip()]
+    if not names:
+        return "sản phẩm"
+    if len(names) == 1:
+        return names[0]
+    return f"{names[0]} và {len(names) - 1} sản phẩm khác"
+
+
 async def _mark_subscription_inactive(subscription_id: int) -> None:
     async with async_session() as db:
         subscription = await db.get(AdminPushSubscription, subscription_id)
@@ -113,14 +122,16 @@ async def send_new_order_push_notifications(
     tracking_code: str | None,
     receiver_name: str | None,
     total_amount: float | int | None,
+    product_names: list[str] | None = None,
 ) -> None:
     if not is_web_push_configured():
         return
 
     amount = int(float(total_amount or 0))
+    item_summary = _build_order_item_summary(product_names)
     payload = {
         "title": "Có đơn hàng mới",
-        "body": f"{receiver_name or 'Khách hàng'} vừa đặt đơn {tracking_code or f'#{order_id}'} - {amount:,}đ".replace(",", "."),
+        "body": f"{receiver_name or 'Khách hàng'} vừa đặt {item_summary} - {amount:,}đ".replace(",", "."),
         "url": f"/admin/orders?orderId={order_id}",
         "tag": f"locsang-order-{order_id}",
         "orderId": order_id,
@@ -147,10 +158,12 @@ async def create_new_order_admin_notification(
     tracking_code: str | None,
     receiver_name: str | None,
     total_amount: float | int | None,
+    product_names: list[str] | None = None,
 ) -> None:
     amount = int(float(total_amount or 0))
+    item_summary = _build_order_item_summary(product_names)
     title = "Có đơn hàng mới"
-    body = f"{receiver_name or 'Khách hàng'} vừa đặt đơn {tracking_code or f'#{order_id}'} - {amount:,}đ".replace(",", ".")
+    body = f"{receiver_name or 'Khách hàng'} vừa đặt {item_summary} - {amount:,}đ".replace(",", ".")
     url = f"/admin/orders?orderId={order_id}"
 
     async with async_session() as db:
@@ -172,4 +185,5 @@ async def create_new_order_admin_notification(
         tracking_code=tracking_code,
         receiver_name=receiver_name,
         total_amount=total_amount,
+        product_names=product_names,
     )
