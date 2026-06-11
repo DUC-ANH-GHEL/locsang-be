@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any
+from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, EmailStr, Field
@@ -9,10 +9,10 @@ from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.database import get_db
 from app.core.deps import get_current_user
 from app.core.role_helpers import ADMIN_ROLE_NAMES, get_role_name_by_id, is_admin_role
 from app.core.security import get_password_hash, verify_password
-from app.core.database import get_db
 from app.domain.models.role import Role
 from app.domain.models.user import User
 
@@ -25,6 +25,13 @@ class AdminAccountCreate(BaseModel):
     full_name: str = Field(..., min_length=2, max_length=120)
     password: str = Field(..., min_length=8, max_length=128)
     is_active: bool = True
+
+
+class AdminAccountUpdate(BaseModel):
+    email: Optional[EmailStr] = None
+    full_name: Optional[str] = Field(default=None, min_length=2, max_length=120)
+    password: Optional[str] = Field(default=None, min_length=8, max_length=128)
+    is_active: Optional[bool] = None
 
 
 class ChangePasswordBody(BaseModel):
@@ -124,9 +131,91 @@ async def create_admin_account(
         raise
     except Exception:
         await db.rollback()
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Không tạo được tài khoản admin.")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Không tạo được tài khoản admin.",
+        )
 
     return {"success": True, "data": _account_response(user)}
+
+
+@router.patch("/{account_id}")
+async def update_admin_account(
+    account_id: int,
+    payload: AdminAccountUpdate,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    user = await db.get(User, account_id)
+    if user is None or not await is_admin_role(db, user.role_id):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Không tìm thấy tài khoản admin.")
+
+    update_data = payload.model_dump(exclude_unset=True)
+    if "email" in update_data and update_data["email"] is not None:
+        email = str(update_data["email"]).strip().lower()
+        existing = (
+            await db.execute(
+                select(User).where(func.lower(User.email) == email, User.id != account_id).limit(1)
+            )
+        ).scalar_one_or_none()
+        if existing is not None:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Email này đã có tài khoản admin.")
+        user.email = email
+
+    if "full_name" in update_data and update_data["full_name"] is not None:
+        user.full_name = str(update_data["full_name"]).strip()
+
+    if "password" in update_data and update_data["password"]:
+        _validate_password_strength(str(update_data["password"]))
+        user.hashed_password = get_password_hash(str(update_data["password"]))
+
+    if "is_active" in update_data and update_data["is_active"] is not None:
+        next_active = bool(update_data["is_active"])
+        if int(current_user.id) == int(user.id) and not next_active:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Không thể tắt chính tài khoản đang đăng nhập.",
+            )
+        user.is_active = next_active
+
+    user.updated_at = datetime.utcnow()
+    try:
+        await db.commit()
+        await db.refresh(user)
+    except IntegrityError:
+        await db.rollback()
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Email này đã có tài khoản admin.")
+
+    role_name = await get_role_name_by_id(db, user.role_id)
+    return {"success": True, "data": _account_response(user, role_name or "admin")}
+
+
+@router.delete("/{account_id}")
+async def delete_admin_account(
+    account_id: int,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    user = await db.get(User, account_id)
+    if user is None or not await is_admin_role(db, user.role_id):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Không tìm thấy tài khoản admin.")
+    if int(current_user.id) == int(user.id):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Không thể xóa chính tài khoản đang đăng nhập.",
+        )
+
+    try:
+        await db.delete(user)
+        await db.commit()
+    except IntegrityError:
+        await db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Không thể xóa tài khoản đang có dữ liệu liên quan. Hãy tắt đăng nhập thay thế.",
+        )
+
+    return {"success": True}
 
 
 @router.post("/change-password")
@@ -141,7 +230,10 @@ async def change_admin_password(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Mật khẩu hiện tại không đúng.")
 
     if verify_password(payload.new_password, current_user.hashed_password):
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Mật khẩu mới không được trùng mật khẩu hiện tại.")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Mật khẩu mới không được trùng mật khẩu hiện tại.",
+        )
 
     current_user.hashed_password = get_password_hash(payload.new_password)
     current_user.updated_at = datetime.utcnow()

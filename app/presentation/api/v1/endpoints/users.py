@@ -43,6 +43,12 @@ async def login(
             headers={"WWW-Authenticate": "Bearer"},
         )
 
+    if not bool(getattr(user, "is_active", True)):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="This admin account is disabled",
+        )
+
     if not await is_admin_role(db, getattr(user, "role_id", None)):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
