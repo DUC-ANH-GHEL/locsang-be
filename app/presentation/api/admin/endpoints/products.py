@@ -387,6 +387,34 @@ def _admin_error(
     raise AdminAPIError(error_code=error_code, message=message, status_code=status_code)
 
 
+def _raise_duplicate_integrity_error(exc: IntegrityError) -> None:
+    orig = getattr(exc, "orig", None)
+    diag = getattr(orig, "diag", None)
+    constraint = str(getattr(diag, "constraint_name", "") or "").lower()
+    detail = str(getattr(diag, "message_detail", "") or orig or exc).lower()
+    signal = f"{constraint} {detail}"
+
+    if "slug" in signal:
+        _admin_error(
+            error_code="SLUG_DUPLICATE",
+            message="Slug đã tồn tại. Vui lòng đổi tên sản phẩm để tạo slug khác.",
+            status_code=status.HTTP_409_CONFLICT,
+        )
+
+    if "sku" in signal:
+        _admin_error(
+            error_code="SKU_DUPLICATE",
+            message="SKU đã tồn tại. Vui lòng dùng mã phụ tùng khác.",
+            status_code=status.HTTP_409_CONFLICT,
+        )
+
+    _admin_error(
+        error_code="PRODUCT_DUPLICATE",
+        message="Thông tin sản phẩm bị trùng. Vui lòng kiểm tra lại slug và SKU.",
+        status_code=status.HTTP_409_CONFLICT,
+    )
+
+
 async def _slug_exists(db: AsyncSession, slug: str, *, exclude_product_id: Optional[int] = None) -> bool:
     stmt = select(func.count(Product.id)).where(Product.slug == slug)
     if exclude_product_id is not None:
@@ -842,13 +870,9 @@ async def admin_create_product(
         raise
     except AdminAPIError:
         raise
-    except IntegrityError:
+    except IntegrityError as exc:
         await db.rollback()
-        _admin_error(
-            error_code="PRODUCT_DUPLICATE",
-            message="Slug hoặc SKU sản phẩm đã tồn tại. Vui lòng nhập giá trị khác.",
-            status_code=status.HTTP_409_CONFLICT,
-        )
+        _raise_duplicate_integrity_error(exc)
     except Exception as e:
         _admin_error(error_code="INTERNAL_ERROR", message=str(e), status_code=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
@@ -1048,13 +1072,9 @@ async def admin_update_product(
     except AdminAPIError:
         await db.rollback()
         raise
-    except IntegrityError:
+    except IntegrityError as exc:
         await db.rollback()
-        _admin_error(
-            error_code="PRODUCT_DUPLICATE",
-            message="Slug hoặc SKU sản phẩm đã tồn tại. Vui lòng nhập giá trị khác.",
-            status_code=status.HTTP_409_CONFLICT,
-        )
+        _raise_duplicate_integrity_error(exc)
     except Exception as e:
         await db.rollback()
         _admin_error(error_code="INTERNAL_ERROR", message=str(e), status_code=status.HTTP_500_INTERNAL_SERVER_ERROR)
