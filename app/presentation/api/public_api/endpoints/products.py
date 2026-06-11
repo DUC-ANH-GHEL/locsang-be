@@ -46,6 +46,36 @@ def _parse_int_id(raw: Optional[str], field: str) -> Optional[int]:
 
 
 _slug_invalid_re = re.compile(r"[^a-z0-9\-]+")
+_VIETNAMESE_SEARCH_FROM = "àáạảãâầấậẩẫăằắặẳẵèéẹẻẽêềếệểễìíịỉĩòóọỏõôồốộổỗơờớợởỡùúụủũưừứựửữỳýỵỷỹđ"
+_VIETNAMESE_SEARCH_TO = "aaaaaaaaaaaaaaaaaeeeeeeeeeeeiiiiiooooooooooooooooouuuuuuuuuuuyyyyyd"
+
+
+def _normalize_search_token(value: str) -> str:
+    normalized = str(value or "").strip().lower()
+    normalized = normalized.translate(str.maketrans(_VIETNAMESE_SEARCH_FROM, _VIETNAMESE_SEARCH_TO))
+    normalized = re.sub(r"\s+", " ", normalized)
+    return normalized
+
+
+def _searchable_expr(column: Any) -> Any:
+    return func.translate(func.lower(column), _VIETNAMESE_SEARCH_FROM, _VIETNAMESE_SEARCH_TO)
+
+
+def _build_product_search_filter(raw_search: str) -> Any:
+    tokens = [token for token in re.split(r"[\s,;]+", _normalize_search_token(raw_search)) if token]
+    if not tokens:
+        return None
+
+    searchable_columns = [
+        _searchable_expr(Product.name),
+        _searchable_expr(Product.sku),
+        _searchable_expr(Product.slug),
+    ]
+    token_filters = []
+    for token in tokens[:6]:
+        pattern = f"%{token}%"
+        token_filters.append(or_(*[column.ilike(pattern) for column in searchable_columns]))
+    return and_(*token_filters)
 
 
 def _slugify(name: str) -> str:
@@ -314,6 +344,7 @@ def _product_to_item(product: Product, category: Category) -> PublicProductItem:
         id=str(product.id),
         name=str(getattr(product, "name", None) or f"Product {product.id}"),
         slug=str(getattr(product, "slug", None) or f"product-{product.id}"),
+        sku=getattr(product, "sku", None),
         price=float(_to_float(getattr(product, "price", None)) or 0.0),
         salePrice=_to_float(getattr(product, "sale_price", None)),
         thumbnail=thumbnail,
@@ -454,7 +485,9 @@ async def list_products(
 
         filters = []
         if search and search.strip() != "":
-            filters.append(Product.name.ilike(f"%{search.strip()}%"))
+            search_filter = _build_product_search_filter(search)
+            if search_filter is not None:
+                filters.append(search_filter)
         if category_id is not None:
             filters.append(Product.category_id == category_id)
         if min_price_f is not None:

@@ -54,6 +54,7 @@ class PublicProductItem(BaseModel):
     id: str
     name: str
     slug: str
+    sku: Optional[str] = None
     price: float
     sale_price: Optional[float] = Field(default=None, alias="salePrice")
     thumbnail: Optional[str] = None
