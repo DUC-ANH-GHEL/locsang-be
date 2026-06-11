@@ -20,6 +20,7 @@ class MediaItemDTO(BaseModel):
     url: str
     type: MediaType = "image"
     sort_order: int = 0
+    public_id: Optional[str] = None
 
 
 class ProductSpecificationDTO(BaseModel):
@@ -142,3 +143,7 @@ class AdminProductQuickPatchBody(BaseModel):
     featured: Optional[bool] = None
     category_id: Optional[int] = None
     affiliate: Optional[int] = None
+
+
+class ProductUploadCleanupBody(BaseModel):
+    public_ids: List[str] = Field(default_factory=list)

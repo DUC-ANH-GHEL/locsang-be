@@ -19,6 +19,7 @@ from app.application.dto.admin_product import (
     AdminVariantPatchBody,
     BulkUpdateVariantsBody,
     GenerateVariantsBody,
+    ProductUploadCleanupBody,
 )
 from app.core.deps import get_current_user, get_db
 from app.domain.models.category import Category
@@ -620,7 +621,7 @@ async def _load_attribute_value_lookup(db: AsyncSession, product_id: int) -> tup
 
 def _product_detail_response(product: Product) -> Dict[str, Any]:
     media = [
-        {"url": m.url, "type": getattr(m, "type", "image"), "sort_order": m.sort_order}
+        {"url": m.url, "type": getattr(m, "type", "image"), "sort_order": m.sort_order, "public_id": m.public_id}
         for m in sorted(product.images, key=lambda x: x.sort_order)
     ]
 
@@ -743,6 +744,31 @@ async def admin_upload_product_image(
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Upload ảnh thất bại: {exc}") from exc
 
 
+@router.post("/upload-image/cleanup")
+async def admin_cleanup_uploaded_product_images(
+    payload: ProductUploadCleanupBody,
+    current_user: User = Depends(get_current_user),
+):
+    cleaned = 0
+    failed: List[str] = []
+    allowed_prefix = "products/"
+
+    for raw_public_id in payload.public_ids:
+        public_id = str(raw_public_id or "").strip()
+        if not public_id or not public_id.startswith(allowed_prefix):
+            continue
+        try:
+            result = cloudinary.uploader.destroy(public_id, resource_type="image", invalidate=True)
+            if (result or {}).get("result") in ("ok", "not found"):
+                cleaned += 1
+            else:
+                failed.append(public_id)
+        except Exception:
+            failed.append(public_id)
+
+    return {"success": len(failed) == 0, "cleaned": cleaned, "failed": failed}
+
+
 @router.post("", status_code=status.HTTP_201_CREATED)
 async def admin_create_product(
     payload: AdminProductCreateBody,
@@ -759,6 +785,12 @@ async def admin_create_product(
         existing = await _skus_in_use(db, skus)
         if existing:
             _admin_error(error_code="SKU_DUPLICATE", message=f"SKU already exists: {existing[0]}", status_code=status.HTTP_409_CONFLICT)
+
+        # The uniqueness checks above run SELECT statements, which auto-begin an
+        # AsyncSession transaction. Close that read-only transaction before
+        # opening the explicit write transaction below.
+        if db.in_transaction():
+            await db.rollback()
 
         async with db.begin():
             product = Product(
@@ -801,6 +833,7 @@ async def admin_create_product(
                         product_id=product.id,
                         url=m.url,
                         type=m.type,
+                        public_id=m.public_id,
                         sort_order=m.sort_order,
                         is_primary=(m.sort_order == 1),
                     )
@@ -932,6 +965,7 @@ async def admin_update_product(
                         product_id=product.id,
                         url=m.url,
                         type=m.type,
+                        public_id=m.public_id,
                         sort_order=m.sort_order,
                         is_primary=(m.sort_order == 1),
                     )
