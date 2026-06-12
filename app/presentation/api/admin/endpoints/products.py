@@ -230,7 +230,6 @@ async def admin_list_products(
     stock_status: Optional[str] = None,
     min_price: Optional[str] = None,
     max_price: Optional[str] = None,
-    featured: Optional[str] = None,
     sort: Optional[str] = None,
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_user),
@@ -288,10 +287,6 @@ async def admin_list_products(
     hv = _parse_bool(has_variants)
     if hv is not None:
         filters.append(Product.has_variants.is_(hv))
-
-    ft = _parse_bool(featured)
-    if ft is not None:
-        filters.append(Product.featured.is_(ft))
 
     if min_price_f is not None:
         filters.append(price_min_expr >= min_price_f)
@@ -368,7 +363,6 @@ async def admin_list_products(
             "category_id": product.category_id,
             "category": None if not category else {"id": category.id, "name": category.name},
             "brand": product.brand,
-            "featured": bool(product.featured),
             "has_variants": bool(product.has_variants),
             "created_at": product.created_at,
             "updated_at": product.updated_at,
@@ -625,8 +619,6 @@ async def admin_quick_patch_product(
     if payload.status is not None:
         product.status = payload.status
         product.is_active = (payload.status == "active")
-    if payload.featured is not None:
-        product.featured = bool(payload.featured)
     if payload.category_id is not None:
         product.category_id = int(payload.category_id)
 
@@ -731,7 +723,6 @@ def _product_detail_response(product: Product, category: Optional[Category] = No
         "thumbnail": product.thumbnail,
         "status": product.status,
         "is_active": product.is_active,
-        "featured": product.featured,
         "category_id": product.category_id,
         "category_name": category.name if category else None,
         "category": {"id": category.id, "name": category.name} if category else None,
@@ -845,7 +836,6 @@ async def admin_create_product(
                 short_description=payload.short_description,
                 description=payload.description,
                 status=payload.status,
-                featured=payload.featured,
                 category_id=payload.category_id,
                 brand=payload.brand,
                 tags=payload.tags,
@@ -961,7 +951,6 @@ async def admin_update_product(
             "short_description",
             "description",
             "status",
-            "featured",
             "category_id",
             "brand",
             "has_variants",

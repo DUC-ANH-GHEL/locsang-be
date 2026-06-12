@@ -7,7 +7,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 
 ProductStatus = Literal["active", "inactive"]
-SortBy = Literal["createdAt", "price", "name"]
+SortBy = Literal["createdAt", "price", "name", "bestSelling"]
 SortOrder = Literal["asc", "desc"]
 
 
@@ -62,6 +62,7 @@ class PublicProductItem(BaseModel):
     allow_backorder: bool = Field(default=False, alias="allowBackorder")
     can_purchase: bool = Field(default=False, alias="canPurchase")
     stock_status: str = Field(default="out", alias="stockStatus")
+    sold_count: int = Field(default=0, alias="soldCount")
     status: ProductStatus
     category: CategoryRef
     created_at: datetime = Field(alias="createdAt")
@@ -78,7 +79,6 @@ class PublicProductDetail(PublicProductItem):
     sku: Optional[str] = None
     brand: Optional[str] = None
     has_variants: bool = Field(default=False, alias="hasVariants")
-    featured: bool = False
     tags: List[str] = Field(default_factory=list)
     specifications: List[ProductSpecificationItem] = Field(default_factory=list)
     images: List[ProductImageItem] = Field(default_factory=list)

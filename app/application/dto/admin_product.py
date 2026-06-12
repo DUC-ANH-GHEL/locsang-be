@@ -54,7 +54,6 @@ class AdminProductCreateBody(BaseModel):
     description: Optional[str] = None
 
     status: ProductStatus = "active"
-    featured: bool = False
 
     category_id: int
     brand: Optional[str] = None
@@ -78,7 +77,6 @@ class AdminProductUpdateBody(BaseModel):
     description: Optional[str] = None
 
     status: Optional[ProductStatus] = None
-    featured: Optional[bool] = None
 
     category_id: Optional[int] = None
     brand: Optional[str] = None
@@ -123,7 +121,6 @@ class AdminProductQuickPatchBody(BaseModel):
     price: Optional[float] = None
     stock: Optional[int] = None
     status: Optional[ProductStatus] = None
-    featured: Optional[bool] = None
     category_id: Optional[int] = None
 
 

@@ -21,6 +21,8 @@ from app.application.dto.public_product import (
 )
 from app.core.deps import get_db
 from app.domain.models.category import Category
+from app.domain.models.order import Order
+from app.domain.models.order_item import OrderItem
 from app.domain.models.product import Product, ProductImage, ProductVariant
 
 
@@ -334,6 +336,10 @@ def _product_purchase_state(product: Product) -> dict[str, object]:
     }
 
 
+def _get_product_sold_count(product: Product) -> int:
+    return int(getattr(product, "_sold_count", 0) or 0)
+
+
 def _product_to_item(product: Product, category: Category) -> PublicProductItem:
     thumbnail = _resolve_storefront_thumbnail(product)
     created_at = getattr(product, "created_at", None) or datetime.now(timezone.utc)
@@ -352,6 +358,7 @@ def _product_to_item(product: Product, category: Category) -> PublicProductItem:
         allowBackorder=bool(purchase_state["allow_backorder"]),
         canPurchase=bool(purchase_state["can_purchase"]),
         stockStatus=str(purchase_state["stock_status"]),
+        soldCount=_get_product_sold_count(product),
         status=_normalize_status(product),
         category={"id": str(category.id), "name": str(getattr(category, "name", None) or "Danh muc")},
         createdAt=created_at,
@@ -434,7 +441,6 @@ def _product_to_detail(
         currency=getattr(product, "currency", "VND"),
         brand=getattr(product, "brand", None),
         hasVariants=bool(getattr(product, "has_variants", False)),
-        featured=bool(getattr(product, "featured", False)),
         tags=tags,
         specifications=specifications,
         images=images,
@@ -472,7 +478,7 @@ async def list_products(
         sortBy = sortBy or "createdAt"
         order = order or "desc"
         status_q = status_q or "active"
-        if sortBy not in ("createdAt", "price", "name"):
+        if sortBy not in ("createdAt", "price", "name", "bestSelling"):
             raise ValueError("sortBy")
         if order not in ("asc", "desc"):
             raise ValueError("order")
@@ -523,17 +529,32 @@ async def list_products(
                 )
             )
 
+        sold_count_expr = func.coalesce(func.sum(OrderItem.quantity), 0).label("sold_count")
+        sold_count_subquery = (
+            select(OrderItem.product_id.label("product_id"), sold_count_expr)
+            .join(Order, Order.id == OrderItem.order_id)
+            .where(
+                Order.deleted_at.is_(None),
+                Order.status != "cancelled",
+            )
+            .group_by(OrderItem.product_id)
+            .subquery()
+        )
+        product_sold_count = func.coalesce(sold_count_subquery.c.sold_count, 0).label("sold_count")
+
         sort_map = {
             "createdAt": Product.created_at,
             "price": Product.price,
             "name": Product.name,
+            "bestSelling": product_sold_count,
         }
         sort_col = sort_map[sortBy]
         order_by = sort_col.asc() if order == "asc" else sort_col.desc()
 
         base_stmt = (
-            select(Product, Category)
+            select(Product, Category, product_sold_count)
             .join(Category, Product.category_id == Category.id)
+            .outerjoin(sold_count_subquery, sold_count_subquery.c.product_id == Product.id)
             .options(selectinload(Product.images), selectinload(Product.variants))
         )
         if filters:
@@ -547,11 +568,14 @@ async def list_products(
         total_pages = (total_items + limit_i - 1) // limit_i if total_items > 0 else 0
 
         offset = (page_i - 1) * limit_i
-        stmt = base_stmt.order_by(order_by).offset(offset).limit(limit_i)
+        stmt = base_stmt.order_by(order_by, Product.created_at.desc()).offset(offset).limit(limit_i)
 
         rows = (await db.execute(stmt)).all()
 
-        items = [_product_to_item(prod, cat) for prod, cat in rows]
+        items = []
+        for prod, cat, sold_count in rows:
+            setattr(prod, "_sold_count", int(sold_count or 0))
+            items.append(_product_to_item(prod, cat))
 
         has_next = total_pages > 0 and page_i < total_pages
         has_prev = total_pages > 0 and page_i > 1
@@ -598,6 +622,19 @@ async def get_product_detail(
     category = await db.get(Category, product.category_id)
     if not category:
         raise HTTPException(status_code=404, detail="Category not found")
+
+    sold_count = (
+        await db.execute(
+            select(func.coalesce(func.sum(OrderItem.quantity), 0))
+            .join(Order, Order.id == OrderItem.order_id)
+            .where(
+                OrderItem.product_id == product.id,
+                Order.deleted_at.is_(None),
+                Order.status != "cancelled",
+            )
+        )
+    ).scalar_one()
+    setattr(product, "_sold_count", int(sold_count or 0))
 
     detail = _product_to_detail(product, category)
     return {"success": True, "data": detail.model_dump(by_alias=True)}
