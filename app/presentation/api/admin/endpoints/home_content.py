@@ -317,6 +317,7 @@ async def upload_home_image(
             data,
             folder="home-content",
             resource_type="image",
+            format="webp",
             overwrite=False,
             use_filename=True,
         )

@@ -760,6 +760,7 @@ async def admin_upload_product_image(
             data,
             folder="products",
             resource_type="image",
+            format="webp",
             overwrite=False,
             use_filename=True,
         )
