@@ -432,7 +432,6 @@ def _product_to_detail(
         shortDescription=getattr(product, "short_description", None),
         description=getattr(product, "description", None),
         currency=getattr(product, "currency", "VND"),
-        sku=getattr(product, "sku", None),
         brand=getattr(product, "brand", None),
         hasVariants=bool(getattr(product, "has_variants", False)),
         featured=bool(getattr(product, "featured", False)),
