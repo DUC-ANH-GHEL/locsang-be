@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from fastapi import APIRouter, Depends, Response
-from sqlalchemy import func, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -12,7 +12,7 @@ from app.domain.models.category import Category
 from app.domain.models.home_content import HomeContent
 from app.domain.models.order import Order
 from app.domain.models.order_item import OrderItem
-from app.domain.models.product import Product
+from app.domain.models.product import Product, ProductVariant
 from app.presentation.api.public_api.cache import apply_public_cache
 from app.presentation.api.public_api.endpoints.home_content import _default_home_payload
 from app.presentation.api.public_api.endpoints.products import (
@@ -89,15 +89,40 @@ async def _get_best_sellers(db: AsyncSession) -> list[dict[str, Any]]:
 
 
 async def _get_sale_products(db: AsyncSession) -> list[dict[str, Any]]:
+    any_variant_exists = select(ProductVariant.id).where(ProductVariant.product_id == Product.id).exists()
+    sale_variant_exists = (
+        select(ProductVariant.id)
+        .where(
+            ProductVariant.product_id == Product.id,
+            ProductVariant.is_active.is_(True),
+            ProductVariant.status == "active",
+            ProductVariant.sale_price.is_not(None),
+            ProductVariant.sale_price > 0,
+            ProductVariant.price.is_not(None),
+            ProductVariant.sale_price < ProductVariant.price,
+            or_(
+                ProductVariant.manage_stock.is_(False),
+                ProductVariant.stock > 0,
+                ProductVariant.allow_backorder.is_(True),
+            ),
+        )
+        .exists()
+    )
     stmt = (
         select(Product, Category)
         .join(Category, Product.category_id == Category.id)
         .options(selectinload(Product.images), selectinload(Product.variants))
         .where(
             Category.is_active.is_(True),
-            Product.sale_price.is_not(None),
-            Product.sale_price > 0,
-            Product.sale_price < Product.price,
+            or_(
+                sale_variant_exists,
+                and_(
+                    ~any_variant_exists,
+                    Product.sale_price.is_not(None),
+                    Product.sale_price > 0,
+                    Product.sale_price < Product.price,
+                ),
+            ),
             *_sellable_product_filters(),
         )
         .order_by(Product.updated_at.desc(), Product.created_at.desc())

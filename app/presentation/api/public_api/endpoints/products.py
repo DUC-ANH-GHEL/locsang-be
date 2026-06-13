@@ -373,6 +373,32 @@ def _variant_can_purchase(variant: ProductVariant) -> bool:
     return int(getattr(variant, "stock", 0) or 0) > 0 or bool(getattr(variant, "allow_backorder", False))
 
 
+def _price_pair(price_value: object, sale_value: object) -> dict[str, Optional[float]]:
+    price = _to_float(price_value)
+    sale_price = _to_float(sale_value)
+    if price is not None and price > 0 and sale_price is not None and 0 < sale_price < price:
+        return {"current": sale_price, "price": price, "sale_price": sale_price}
+    if price is not None and price > 0:
+        return {"current": price, "price": price, "sale_price": None}
+    if sale_price is not None and sale_price > 0:
+        return {"current": sale_price, "price": sale_price, "sale_price": None}
+    return {"current": 0.0, "price": 0.0, "sale_price": None}
+
+
+def _product_display_pricing(product: Product) -> dict[str, Optional[float]]:
+    active_variants = _active_variants(product)
+    purchasable_variants = [variant for variant in active_variants if _variant_can_purchase(variant)]
+    variants = purchasable_variants or active_variants
+    if variants:
+        best = min(
+            (_price_pair(getattr(variant, "price", None), getattr(variant, "sale_price", None)) for variant in variants),
+            key=lambda item: float(item["current"] or 0),
+        )
+        return {"price": best["price"], "sale_price": best["sale_price"]}
+    base = _price_pair(getattr(product, "price", None), getattr(product, "sale_price", None))
+    return {"price": base["price"], "sale_price": base["sale_price"]}
+
+
 def _product_purchase_state(product: Product) -> dict[str, object]:
     all_variants = list(product.variants or [])
     variants = _active_variants(product)
@@ -436,14 +462,15 @@ def _product_to_item(product: Product, category: Category) -> PublicProductItem:
     created_at = getattr(product, "created_at", None) or datetime.now(timezone.utc)
     updated_at = getattr(product, "updated_at", None) or created_at
     purchase_state = _product_purchase_state(product)
+    display_pricing = _product_display_pricing(product)
 
     return PublicProductItem(
         id=str(product.id),
         name=str(getattr(product, "name", None) or f"Product {product.id}"),
         slug=str(getattr(product, "slug", None) or f"product-{product.id}"),
         sku=getattr(product, "sku", None),
-        price=float(_to_float(getattr(product, "price", None)) or 0.0),
-        salePrice=_to_float(getattr(product, "sale_price", None)),
+        price=float(display_pricing["price"] or 0.0),
+        salePrice=display_pricing["sale_price"],
         thumbnail=thumbnail,
         stock=int(purchase_state["stock"]),
         allowBackorder=bool(purchase_state["allow_backorder"]),
@@ -525,7 +552,6 @@ def _product_to_detail(
                 specifications.append({"label": label, "value": value})
 
     detail_base = _product_to_item(product, category).model_dump(by_alias=True)
-    detail_base["salePrice"] = _to_float(getattr(product, "sale_price", None))
 
     return PublicProductDetail(
         **detail_base,
@@ -684,26 +710,7 @@ async def list_products(
         return JSONResponse(status_code=500, content={"success": False, "message": "Internal server error"})
 
 
-@router.get("/{id}", response_model=ProductDetailResponse)
-async def get_product_detail(
-    id: str,
-    response: Response,
-    db: AsyncSession = Depends(get_db),
-):
-    product_id = _parse_int_id(id, "id")
-    if product_id is None:
-        raise HTTPException(status_code=400, detail="id is required")
-
-    stmt = (
-        select(Product)
-        .options(*_product_detail_load_options())
-        .where(Product.id == product_id)
-        .limit(1)
-    )
-    product = (await db.execute(stmt)).scalar_one_or_none()
-    if not product:
-        raise HTTPException(status_code=404, detail="Product not found")
-
+async def _detail_response_for_product(product: Product, response: Response, db: AsyncSession) -> dict[str, object]:
     category = await db.get(Category, product.category_id)
     if not category:
         raise HTTPException(status_code=404, detail="Category not found")
@@ -724,6 +731,73 @@ async def get_product_detail(
     detail = _product_to_detail(product, category)
     apply_public_cache(response)
     return {"success": True, "data": detail.model_dump(by_alias=True)}
+
+
+@router.get("/slug/{slug}", response_model=ProductDetailResponse)
+async def get_product_detail_by_slug(
+    slug: str,
+    response: Response,
+    db: AsyncSession = Depends(get_db),
+):
+    normalized_slug = _slugify(slug)
+    if not normalized_slug:
+        raise HTTPException(status_code=400, detail="slug is required")
+
+    product = (
+        await db.execute(
+            select(Product)
+            .options(*_product_detail_load_options())
+            .where(Product.slug == normalized_slug)
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+
+    if product is None:
+        rows = (
+            await db.execute(
+                select(Product)
+                .options(*_product_detail_load_options())
+                .where(*_sellable_product_filters())
+                .limit(500)
+            )
+        ).scalars().all()
+        for candidate in rows:
+            slug_values = {
+                _slugify(str(getattr(candidate, "name", "") or "")),
+                _slugify(str(getattr(candidate, "slug", "") or "")),
+            }
+            if normalized_slug in slug_values:
+                product = candidate
+            if product is not None:
+                break
+
+    if product is None:
+        raise HTTPException(status_code=404, detail="Product not found")
+
+    return await _detail_response_for_product(product, response, db)
+
+
+@router.get("/{id}", response_model=ProductDetailResponse)
+async def get_product_detail(
+    id: str,
+    response: Response,
+    db: AsyncSession = Depends(get_db),
+):
+    product_id = _parse_int_id(id, "id")
+    if product_id is None:
+        raise HTTPException(status_code=400, detail="id is required")
+
+    stmt = (
+        select(Product)
+        .options(*_product_detail_load_options())
+        .where(Product.id == product_id)
+        .limit(1)
+    )
+    product = (await db.execute(stmt)).scalar_one_or_none()
+    if not product:
+        raise HTTPException(status_code=404, detail="Product not found")
+
+    return await _detail_response_for_product(product, response, db)
 
 
 @router.post("", response_model=ProductDetailResponse, status_code=status.HTTP_201_CREATED)
