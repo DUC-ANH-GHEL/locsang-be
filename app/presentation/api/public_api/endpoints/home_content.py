@@ -34,7 +34,7 @@ def _default_home_payload() -> Dict[str, Any]:
         "header_nav_shop_text": "Cửa hàng",
         "header_nav_new_arrivals_text": "Hàng mới về",
         "header_nav_orders_text": "Đơn hàng",
-        "footer_brand_name": "Lộc Sang",
+        "footer_brand_name": "Yanmar Lộc Sang",
         "footer_desktop_caption": "Phụ tùng và nhớt Yanmar chính hãng, quản lý trực tiếp bởi Lộc Sang.",
         "footer_mobile_description": "Phụ tùng, lọc nhớt, lọc gió và dầu nhớt Yanmar chính hãng.",
         "footer_products_title": "sản phẩm",
