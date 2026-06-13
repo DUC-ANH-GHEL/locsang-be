@@ -528,45 +528,46 @@ async def admin_bulk_products(
     updated = 0
     failed: List[Dict[str, Any]] = []
 
-    async with db.begin():
-        products = (
-            await db.execute(
-                select(Product).where(Product.id.in_(payload.ids))
-            )
-        ).scalars().all()
+    products = (
+        await db.execute(
+            select(Product).where(Product.id.in_(payload.ids))
+        )
+    ).scalars().all()
 
-        by_id = {p.id: p for p in products}
-        for product_id in payload.ids:
-            product = by_id.get(product_id)
-            if not product or product.deleted_at is not None:
-                failed.append({"id": product_id, "reason": "NOT_FOUND"})
-                continue
+    by_id = {p.id: p for p in products}
+    for product_id in payload.ids:
+        product = by_id.get(product_id)
+        if not product or product.deleted_at is not None:
+            failed.append({"id": product_id, "reason": "NOT_FOUND"})
+            continue
 
-            try:
-                if payload.action == "status":
-                    st = payload.data.get("status")
-                    if st not in ("active", "draft", "inactive", "discontinued"):
-                        raise ValueError("status")
-                    product.status = st
-                    is_active = _status_to_is_active(st)
-                    if is_active is not None:
-                        product.is_active = is_active
-                elif payload.action == "category":
-                    cid = payload.data.get("category_id")
-                    if cid is None:
-                        raise ValueError("category_id")
-                    product.category_id = int(cid)
-                elif payload.action == "delete":
-                    product.deleted_at = datetime.utcnow()
-                    product.is_active = False
-                    product.status = "inactive"
-                else:
-                    raise ValueError("action")
+        try:
+            if payload.action == "status":
+                st = payload.data.get("status")
+                if st not in ("active", "draft", "inactive", "discontinued"):
+                    raise ValueError("status")
+                product.status = st
+                is_active = _status_to_is_active(st)
+                if is_active is not None:
+                    product.is_active = is_active
+            elif payload.action == "category":
+                cid = payload.data.get("category_id")
+                if cid is None:
+                    raise ValueError("category_id")
+                product.category_id = int(cid)
+            elif payload.action == "delete":
+                product.deleted_at = datetime.utcnow()
+                product.is_active = False
+                product.status = "inactive"
+            else:
+                raise ValueError("action")
 
-                product.updated_at = datetime.utcnow()
-                updated += 1
-            except Exception:
-                failed.append({"id": product_id, "reason": "INVALID_DATA"})
+            product.updated_at = datetime.utcnow()
+            updated += 1
+        except Exception:
+            failed.append({"id": product_id, "reason": "INVALID_DATA"})
+
+    await db.commit()
 
     return {"success": True, "updated": updated, "failed": failed}
 
@@ -1197,13 +1198,13 @@ async def admin_bulk_update_variants(
     if not update_data:
         _admin_error(error_code="UPDATE_INVALID", message="No valid fields to update")
 
-    async with db.begin():
-        stmt = (
-            update(ProductVariant)
-            .where(ProductVariant.product_id == product_id, ProductVariant.id.in_(payload.variant_ids))
-            .values(**update_data)
-        )
-        result = await db.execute(stmt)
+    stmt = (
+        update(ProductVariant)
+        .where(ProductVariant.product_id == product_id, ProductVariant.id.in_(payload.variant_ids))
+        .values(**update_data)
+    )
+    result = await db.execute(stmt)
+    await db.commit()
 
     return {"success": True, "message": "Variants updated successfully", "data": {"updated": result.rowcount}}
 
