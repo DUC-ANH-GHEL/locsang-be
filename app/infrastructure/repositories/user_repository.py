@@ -1,5 +1,7 @@
 from typing import Optional, List
-from sqlalchemy import select
+import re
+
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.domain.models.user import User
 from app.infrastructure.repositories.base import SQLAlchemyRepository
@@ -12,8 +14,20 @@ class UserRepository(SQLAlchemyRepository[User]):
         super().__init__(session, User)
 
     async def get_by_email(self, email: str) -> Optional[User]:
-        """Get user by email"""
-        query = select(User).where(User.email == email)
+        """Get user by email or phone login identifier."""
+        identifier = str(email or "").strip()
+        normalized_email = identifier.lower()
+        compact_phone = re.sub(r"[\s\-().]", "", identifier)
+        if compact_phone.startswith("+84"):
+            compact_phone = "0" + compact_phone[3:]
+        elif compact_phone.startswith("84") and len(compact_phone) in {11, 12}:
+            compact_phone = "0" + compact_phone[2:]
+
+        filters = [func.lower(User.email) == normalized_email]
+        if compact_phone.isdigit() and 9 <= len(compact_phone) <= 11:
+            filters.append(User.phone == compact_phone)
+
+        query = select(User).where(or_(*filters))
         result = await self.session.execute(query)
         return result.scalar_one_or_none()
 
