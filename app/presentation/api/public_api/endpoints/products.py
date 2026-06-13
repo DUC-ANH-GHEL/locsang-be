@@ -23,7 +23,7 @@ from app.core.deps import get_db
 from app.domain.models.category import Category
 from app.domain.models.order import Order
 from app.domain.models.order_item import OrderItem
-from app.domain.models.product import Product, ProductImage, ProductVariant
+from app.domain.models.product import Product, ProductAttribute, ProductImage, ProductVariant, VariantAttributeValue
 from app.presentation.api.public_api.cache import apply_public_cache
 
 
@@ -120,6 +120,19 @@ def _normalize_status(product: Product) -> str:
     return _is_active_to_status(bool(getattr(product, "is_active", True)))
 
 
+def _product_detail_load_options() -> list[Any]:
+    return [
+        selectinload(Product.images),
+        selectinload(Product.variants)
+        .selectinload(ProductVariant.attribute_values)
+        .selectinload(VariantAttributeValue.attribute),
+        selectinload(Product.variants)
+        .selectinload(ProductVariant.attribute_values)
+        .selectinload(VariantAttributeValue.attribute_value),
+        selectinload(Product.attributes).selectinload(ProductAttribute.values),
+    ]
+
+
 def _to_float(v) -> Optional[float]:
     if v is None:
         return None
@@ -200,6 +213,60 @@ def _build_variant_name(attribute_values: dict[str, str], fallback_sku: Optional
     if values:
         return " / ".join(values)
     return str(fallback_sku or "")
+
+
+def _variant_attribute_map(variant: ProductVariant) -> dict[str, str]:
+    out: dict[str, str] = {}
+    for item in getattr(variant, "attribute_values", None) or []:
+        attribute = getattr(item, "attribute", None)
+        attribute_value = getattr(item, "attribute_value", None)
+        name = str(getattr(attribute, "name", "") or "").strip()
+        value = str(getattr(attribute_value, "value", "") or "").strip()
+        if name and value:
+            out[name] = value
+    return out
+
+
+def _product_variant_attributes(product: Product, variants: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    used_values: dict[str, set[str]] = {}
+    for variant in variants:
+        attr_map = variant.get("attributeValues")
+        if not isinstance(attr_map, dict):
+            continue
+        for name, value in attr_map.items():
+            clean_name = str(name or "").strip()
+            clean_value = str(value or "").strip()
+            if not clean_name or not clean_value:
+                continue
+            used_values.setdefault(clean_name, set()).add(clean_value)
+
+    if not used_values:
+        return []
+
+    ordered: list[dict[str, Any]] = []
+    seen_names: set[str] = set()
+
+    for attribute in sorted(getattr(product, "attributes", None) or [], key=lambda item: (getattr(item, "id", 0) or 0)):
+        name = str(getattr(attribute, "name", "") or "").strip()
+        if not name or name not in used_values or name in seen_names:
+            continue
+        seen_names.add(name)
+        values: list[str] = []
+        for attr_value in sorted(getattr(attribute, "values", None) or [], key=lambda item: (getattr(item, "id", 0) or 0)):
+            value = str(getattr(attr_value, "value", "") or "").strip()
+            if value and value in used_values[name] and value not in values:
+                values.append(value)
+        for value in used_values[name]:
+            if value not in values:
+                values.append(value)
+        if values:
+            ordered.append({"name": name, "values": values})
+
+    for name, values in used_values.items():
+        if name not in seen_names:
+            ordered.append({"name": name, "values": sorted(values)})
+
+    return ordered
 
 
 def _extract_variant_media(payload: object, image_url: Optional[str]) -> tuple[list[str], list[str]]:
@@ -412,8 +479,10 @@ def _product_to_detail(
 
     variants = []
     for v in sorted(product.variants or [], key=lambda x: x.id):
+        if not _is_variant_active(v):
+            continue
+        attribute_values = _variant_attribute_map(v)
         payload: dict[str, Any] = {}
-        attribute_values = _extract_variant_attribute_map(payload)
         media_urls, video_urls = _extract_variant_media(payload, getattr(v, "image_url", None))
 
         variants.append(
@@ -425,7 +494,7 @@ def _product_to_detail(
                 "stock": int(getattr(v, "stock", 0) or 0),
                 "manageStock": bool(getattr(v, "manage_stock", True)),
                 "allowBackorder": bool(getattr(v, "allow_backorder", False)),
-                "canPurchase": _is_variant_active(v) and _variant_can_purchase(v),
+                "canPurchase": _variant_can_purchase(v),
                 "status": str(getattr(v, "status", "active") or "active"),
                 "isActive": bool(getattr(v, "is_active", True)),
                 "imageUrl": getattr(v, "image_url", None),
@@ -469,6 +538,7 @@ def _product_to_detail(
         specifications=specifications,
         images=images,
         variants=variants,
+        variantAttributes=_product_variant_attributes(product, variants),
     )
 
 
@@ -626,7 +696,7 @@ async def get_product_detail(
 
     stmt = (
         select(Product)
-        .options(selectinload(Product.images), selectinload(Product.variants))
+        .options(*_product_detail_load_options())
         .where(Product.id == product_id)
         .limit(1)
     )
@@ -708,7 +778,7 @@ async def create_product(
     product = (
         await db.execute(
             select(Product)
-            .options(selectinload(Product.images), selectinload(Product.variants))
+            .options(*_product_detail_load_options())
             .where(Product.id == product.id)
             .limit(1)
         )
@@ -767,7 +837,7 @@ async def update_product(
     product = (
         await db.execute(
             select(Product)
-            .options(selectinload(Product.images), selectinload(Product.variants))
+            .options(*_product_detail_load_options())
             .where(Product.id == product_id)
             .limit(1)
         )

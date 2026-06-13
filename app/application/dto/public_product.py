@@ -50,6 +50,13 @@ class ProductVariantItem(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
 
+class ProductVariantAttributeItem(BaseModel):
+    name: str
+    values: List[str] = Field(default_factory=list)
+
+    model_config = ConfigDict(populate_by_name=True)
+
+
 class PublicProductItem(BaseModel):
     id: str
     name: str
@@ -83,6 +90,7 @@ class PublicProductDetail(PublicProductItem):
     specifications: List[ProductSpecificationItem] = Field(default_factory=list)
     images: List[ProductImageItem] = Field(default_factory=list)
     variants: List[ProductVariantItem] = Field(default_factory=list)
+    variant_attributes: List[ProductVariantAttributeItem] = Field(default_factory=list, alias="variantAttributes")
 
     model_config = ConfigDict(populate_by_name=True)
 

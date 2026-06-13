@@ -19,7 +19,7 @@ from app.application.dto.public_order import (
 from app.core.deps import get_db
 from app.domain.models.order import Order, OrderStatus
 from app.domain.models.order_item import OrderItem
-from app.domain.models.product import Product, ProductVariant
+from app.domain.models.product import Product, ProductVariant, VariantAttributeValue
 from app.domain.models.user import User
 from app.presentation.api.public_api.deps import get_optional_account_user
 from app.application.services.admin_push_notification_service import create_new_order_admin_notification
@@ -52,7 +52,25 @@ def _order_status_text(value: object) -> str:
 def _variant_label(variant: Optional[ProductVariant]) -> str:
     if variant is None:
         return ""
+    values: list[str] = []
+    for item in getattr(variant, "attribute_values", None) or []:
+        attribute_value = getattr(item, "attribute_value", None)
+        value = str(getattr(attribute_value, "value", "") or "").strip()
+        if value:
+            values.append(value)
+    if values:
+        return " / ".join(values)
     return str(getattr(variant, "sku", "") or "").strip()
+
+
+def _order_load_options() -> list[object]:
+    return [
+        selectinload(Order.items).selectinload(OrderItem.product),
+        selectinload(Order.items)
+        .selectinload(OrderItem.variant)
+        .selectinload(ProductVariant.attribute_values)
+        .selectinload(VariantAttributeValue.attribute_value),
+    ]
 
 
 def _to_order_response(order: Order) -> PublicOrderResponseData:
@@ -217,10 +235,7 @@ async def create_public_order(
 
         stmt = (
             select(Order)
-            .options(
-                selectinload(Order.items).selectinload(OrderItem.product),
-                selectinload(Order.items).selectinload(OrderItem.variant),
-            )
+            .options(*_order_load_options())
             .where(Order.id == order.id)
             .limit(1)
         )
@@ -264,10 +279,7 @@ async def lookup_public_order(
 ):
     query = (
         select(Order)
-        .options(
-            selectinload(Order.items).selectinload(OrderItem.product),
-            selectinload(Order.items).selectinload(OrderItem.variant),
-        )
+        .options(*_order_load_options())
         .where(Order.tracking_code == tracking_code, Order.deleted_at.is_(None))
         .limit(1)
     )
