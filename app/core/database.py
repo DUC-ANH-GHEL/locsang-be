@@ -44,7 +44,7 @@ Base = declarative_base()
 # Create async engine with NullPool to prevent connection pooling issues
 engine = create_async_engine(
     _normalize_asyncpg_url(settings.DATABASE_URL),
-    echo=True,  # Enable SQL query logging
+    echo=settings.DB_ECHO_LOG,
     future=True,
     poolclass=NullPool,  # Disable connection pooling
     pool_pre_ping=True

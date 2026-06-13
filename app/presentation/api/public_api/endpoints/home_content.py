@@ -3,13 +3,14 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any, Dict
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Response
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.deps import get_db
 from app.domain.models.home_content import HomeContent
+from app.presentation.api.public_api.cache import apply_public_cache
 
 
 router = APIRouter(prefix="/home-content", tags=["Public Home Content"])
@@ -109,8 +110,10 @@ class PublicHomeContentResponse(BaseModel):
 
 @router.get("", response_model=PublicHomeContentResponse)
 async def get_public_home_content(
+    response: Response,
     db: AsyncSession = Depends(get_db),
 ):
+    apply_public_cache(response)
     row = (await db.execute(select(HomeContent).limit(1))).scalar_one_or_none()
     defaults = _default_home_payload()
 

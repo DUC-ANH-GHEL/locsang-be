@@ -47,6 +47,24 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
+@app.middleware("http")
+async def cache_policy_middleware(request, call_next):
+    response = await call_next(request)
+    path = str(request.url.path or "")
+    sensitive_prefixes = (
+        "/api/admin",
+        "/admin",
+        f"{settings.API_V1_STR}/admin",
+        "/api/account",
+        "/api/orders",
+        "/api/cart",
+        "/api/checkout",
+    )
+    if path.startswith(sensitive_prefixes):
+        response.headers["Cache-Control"] = "no-store"
+    return response
+
 # Router
 app.include_router(api_router, prefix=settings.API_V1_STR)
 app.include_router(admin_api_router, prefix=f"{settings.API_V1_STR}/admin")

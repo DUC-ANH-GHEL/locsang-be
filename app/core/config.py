@@ -29,6 +29,7 @@ class Settings(BaseSettings):
     # NOTE: Do not hardcode production credentials in source control.
     # Override this via the DATABASE_URL environment variable or a local .env file.
     DATABASE_URL: str = "postgresql+asyncpg://postgres:postgres@localhost:5432/locsang"
+    DB_ECHO_LOG: bool = False
 
     # CORS
     BACKEND_CORS_ORIGINS: list = [

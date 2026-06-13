@@ -5,7 +5,7 @@ import re
 from typing import Any, Optional
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from fastapi.responses import JSONResponse
 from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -24,6 +24,7 @@ from app.domain.models.category import Category
 from app.domain.models.order import Order
 from app.domain.models.order_item import OrderItem
 from app.domain.models.product import Product, ProductImage, ProductVariant
+from app.presentation.api.public_api.cache import apply_public_cache
 
 
 router = APIRouter(prefix="/products", tags=["Public Products"])
@@ -68,11 +69,7 @@ def _build_product_search_filter(raw_search: str) -> Any:
     if not tokens:
         return None
 
-    searchable_columns = [
-        _searchable_expr(Product.name),
-        _searchable_expr(Product.sku),
-        _searchable_expr(Product.slug),
-    ]
+    searchable_columns = [_searchable_expr(Product.name)]
     token_filters = []
     for token in tokens[:6]:
         pattern = f"%{token}%"
@@ -336,6 +333,39 @@ def _product_purchase_state(product: Product) -> dict[str, object]:
     }
 
 
+def _sellable_product_filters() -> list[Any]:
+    purchasable_variant_exists = (
+        select(ProductVariant.id)
+        .where(
+            ProductVariant.product_id == Product.id,
+            ProductVariant.is_active.is_(True),
+            ProductVariant.status == "active",
+            or_(
+                ProductVariant.manage_stock.is_(False),
+                ProductVariant.stock > 0,
+                ProductVariant.allow_backorder.is_(True),
+            ),
+        )
+        .exists()
+    )
+    any_variant_exists = select(ProductVariant.id).where(ProductVariant.product_id == Product.id).exists()
+    return [
+        Product.deleted_at.is_(None),
+        Product.is_active.is_(True),
+        Product.status == "active",
+        or_(
+            purchasable_variant_exists,
+            and_(
+                ~any_variant_exists,
+                or_(
+                    Product.stock > 0,
+                    Product.allow_backorder.is_(True),
+                ),
+            ),
+        ),
+    ]
+
+
 def _get_product_sold_count(product: Product) -> int:
     return int(getattr(product, "_sold_count", 0) or 0)
 
@@ -450,6 +480,7 @@ def _product_to_detail(
 
 @router.get("", response_model=ListProductsResponse)
 async def list_products(
+    response: Response,
     page: Optional[str] = Query("1"),
     limit: Optional[str] = Query("20"),
     search: Optional[str] = None,
@@ -460,6 +491,7 @@ async def list_products(
     sortBy: Optional[str] = Query("createdAt"),
     order: Optional[str] = Query("desc"),
     purchasable: Optional[str] = Query("true"),
+    include_total: Optional[str] = Query("true", alias="includeTotal"),
     db: AsyncSession = Depends(get_db),
 ):
     try:
@@ -485,6 +517,7 @@ async def list_products(
         if status_q not in ("active", "inactive"):
             raise ValueError("status")
         purchasable_only = str(purchasable or "true").strip().lower() not in ("0", "false", "no", "all")
+        include_total_bool = str(include_total or "true").strip().lower() not in ("0", "false", "no")
 
         category_id = _parse_int_id(categoryId, "categoryId")
 
@@ -500,34 +533,11 @@ async def list_products(
         if max_price_f is not None:
             filters.append(Product.price <= float(max_price_f))
 
-        # Hard safety guard for storefront visibility.
         filters.append(Product.deleted_at.is_(None))
         filters.append(Product.is_active.is_(True))
-
-        # status filter: spec requires `status`
         filters.append(Product.status == status_q)
         if purchasable_only:
-            purchasable_variant_exists = (
-                select(ProductVariant.id)
-                .where(
-                    ProductVariant.product_id == Product.id,
-                    ProductVariant.is_active.is_(True),
-                    ProductVariant.status == "active",
-                    or_(
-                        ProductVariant.manage_stock.is_(False),
-                        ProductVariant.stock > 0,
-                        ProductVariant.allow_backorder.is_(True),
-                    ),
-                )
-                .exists()
-            )
-            any_variant_exists = select(ProductVariant.id).where(ProductVariant.product_id == Product.id).exists()
-            filters.append(
-                or_(
-                    purchasable_variant_exists,
-                    and_(~any_variant_exists, Product.stock > 0),
-                )
-            )
+            filters.extend(_sellable_product_filters()[3:])
 
         sold_count_expr = func.coalesce(func.sum(OrderItem.quantity), 0).label("sold_count")
         sold_count_subquery = (
@@ -560,25 +570,35 @@ async def list_products(
         if filters:
             base_stmt = base_stmt.where(*filters)
 
-        count_stmt = select(func.count()).select_from(Product).join(Category, Product.category_id == Category.id)
-        if filters:
-            count_stmt = count_stmt.where(*filters)
-
-        total_items = int((await db.execute(count_stmt)).scalar_one())
-        total_pages = (total_items + limit_i - 1) // limit_i if total_items > 0 else 0
-
         offset = (page_i - 1) * limit_i
-        stmt = base_stmt.order_by(order_by, Product.created_at.desc()).offset(offset).limit(limit_i)
+        fetch_limit = limit_i + 1 if not include_total_bool else limit_i
+        stmt = base_stmt.order_by(order_by, Product.created_at.desc()).offset(offset).limit(fetch_limit)
 
         rows = (await db.execute(stmt)).all()
+        has_extra_row = False
+        if not include_total_bool and len(rows) > limit_i:
+            has_extra_row = True
+            rows = rows[:limit_i]
 
         items = []
         for prod, cat, sold_count in rows:
             setattr(prod, "_sold_count", int(sold_count or 0))
             items.append(_product_to_item(prod, cat))
 
-        has_next = total_pages > 0 and page_i < total_pages
-        has_prev = total_pages > 0 and page_i > 1
+        if include_total_bool:
+            count_stmt = select(func.count()).select_from(Product).join(Category, Product.category_id == Category.id)
+            if filters:
+                count_stmt = count_stmt.where(*filters)
+            total_items = int((await db.execute(count_stmt)).scalar_one())
+            total_pages = (total_items + limit_i - 1) // limit_i if total_items > 0 else 0
+            has_next = total_pages > 0 and page_i < total_pages
+        else:
+            total_items = offset + len(items) + (1 if has_extra_row else 0)
+            total_pages = page_i + (1 if has_extra_row else 0)
+            has_next = has_extra_row
+        has_prev = page_i > 1
+
+        apply_public_cache(response)
 
         return {
             "success": True,
@@ -603,6 +623,7 @@ async def list_products(
 @router.get("/{id}", response_model=ProductDetailResponse)
 async def get_product_detail(
     id: str,
+    response: Response,
     db: AsyncSession = Depends(get_db),
 ):
     product_id = _parse_int_id(id, "id")
@@ -637,6 +658,7 @@ async def get_product_detail(
     setattr(product, "_sold_count", int(sold_count or 0))
 
     detail = _product_to_detail(product, category)
+    apply_public_cache(response)
     return {"success": True, "data": detail.model_dump(by_alias=True)}
 
 
