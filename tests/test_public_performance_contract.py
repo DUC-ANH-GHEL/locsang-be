@@ -3,7 +3,7 @@ from sqlalchemy.dialects import postgresql
 from app.core.config import Settings
 from app.domain.models.product import Product
 from app.presentation.api.public_api.api import PUBLIC_CACHE_CONTROL
-from app.presentation.api.public_api.endpoints.products import _build_product_search_filter
+from app.presentation.api.public_api.endpoints.products import _build_product_search_filter, _sellable_product_filters
 
 
 def test_db_echo_log_defaults_to_false():
@@ -27,3 +27,19 @@ def test_public_product_search_only_targets_name():
     assert Product.name.name in compiled
     assert Product.sku.name not in compiled
     assert Product.slug.name not in compiled
+
+
+def test_sellable_product_filters_match_current_schema():
+    compiled = " AND ".join(
+        str(
+            expression.compile(
+                dialect=postgresql.dialect(),
+                compile_kwargs={"literal_binds": True},
+            )
+        )
+        for expression in _sellable_product_filters()
+    )
+
+    assert "products.stock" in compiled
+    assert "product_variants.allow_backorder" in compiled
+    assert "products.allow_backorder" not in compiled

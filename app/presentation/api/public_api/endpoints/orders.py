@@ -175,8 +175,7 @@ async def create_public_order(
                     raise HTTPException(status_code=400, detail=f"Product {product.id} is not available")
                 else:
                     available_stock = int(getattr(product, "stock", 0) or 0)
-                    allow_backorder = bool(getattr(product, "allow_backorder", False))
-                    if not allow_backorder and quantity > available_stock:
+                    if quantity > available_stock:
                         raise HTTPException(status_code=400, detail=f"Not enough stock for product {product.id}")
                     product.stock = available_stock - quantity
 

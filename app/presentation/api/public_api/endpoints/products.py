@@ -355,13 +355,7 @@ def _sellable_product_filters() -> list[Any]:
         Product.status == "active",
         or_(
             purchasable_variant_exists,
-            and_(
-                ~any_variant_exists,
-                or_(
-                    Product.stock > 0,
-                    Product.allow_backorder.is_(True),
-                ),
-            ),
+            and_(~any_variant_exists, Product.stock > 0),
         ),
     ]
 
