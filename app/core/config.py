@@ -48,7 +48,6 @@ class Settings(BaseSettings):
     CLOUDINARY_API_SECRET: Optional[str] = None
 
     # OAuth (optional)
-    GOOGLE_OAUTH_CLIENT_ID: Optional[str] = None
     FACEBOOK_APP_ID: Optional[str] = None
     FACEBOOK_APP_SECRET: Optional[str] = None
 

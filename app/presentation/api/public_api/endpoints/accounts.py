@@ -46,11 +46,6 @@ class AccountResetPasswordBody(BaseModel):
     new_password: str = Field(min_length=8, max_length=128)
 
 
-class AccountGoogleLoginBody(BaseModel):
-    id_token: str = Field(min_length=20)
-    client_id: Optional[str] = Field(default=None, max_length=255)
-
-
 class AccountFacebookLoginBody(BaseModel):
     access_token: str = Field(min_length=20, max_length=2000)
     user_id: Optional[str] = Field(default=None, max_length=128)
@@ -201,31 +196,6 @@ def _decode_password_reset_token(token: str) -> dict:
     return payload
 
 
-async def _verify_google_id_token(id_token: str) -> dict:
-    try:
-        async with httpx.AsyncClient(timeout=12.0) as client:
-            response = await client.get(
-                "https://oauth2.googleapis.com/tokeninfo",
-                params={"id_token": id_token},
-            )
-    except Exception:
-        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="Unable to reach Google token service")
-
-    if response.status_code != 200:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid Google credential")
-
-    payload = response.json() if isinstance(response.json(), dict) else {}
-    issuer = str(payload.get("iss") or "")
-    if issuer not in {"accounts.google.com", "https://accounts.google.com"}:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid Google issuer")
-
-    email_verified = str(payload.get("email_verified") or "").lower()
-    if email_verified not in {"true", "1"}:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Google email is not verified")
-
-    return payload
-
-
 def _extract_social_picture_url(payload: dict) -> Optional[str]:
     if not isinstance(payload, dict):
         return None
@@ -330,62 +300,6 @@ async def login_account(body: AccountLoginBody, db: AsyncSession = Depends(get_d
 
     role_id = getattr(user, "role_id", None)
     if not await is_customer_role(db, role_id):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="This account is not allowed to use storefront login",
-        )
-
-    access_token = create_access_token(
-        data={"sub": str(user.id), "scope": STOREFRONT_TOKEN_SCOPE},
-        expires_delta=timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES),
-    )
-    return AccountAuthResponse(access_token=access_token, token_type="bearer", user=_to_profile(user))
-
-
-@router.post("/google", response_model=AccountAuthResponse)
-async def login_account_google(body: AccountGoogleLoginBody, db: AsyncSession = Depends(get_db)):
-    google_payload = await _verify_google_id_token(body.id_token)
-
-    aud = str(google_payload.get("aud") or "")
-    configured_client_id = str(settings.GOOGLE_OAUTH_CLIENT_ID or "").strip()
-    if configured_client_id and aud != configured_client_id:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Google audience mismatch")
-
-    fallback_client_id = str(body.client_id or "").strip()
-    if not configured_client_id and fallback_client_id and aud != fallback_client_id:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Google client mismatch")
-
-    email = str(google_payload.get("email") or "").strip().lower()
-    if not email:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Google account does not contain email")
-
-    user = await _get_user_by_email(db, email)
-    google_avatar = _extract_social_picture_url(google_payload)
-    if user is None:
-        role_id = await get_or_create_customer_role_id(db)
-        full_name = str(google_payload.get("name") or email.split("@")[0] or "Khach hang").strip()
-        user = User(
-            email=email,
-            hashed_password=get_password_hash(secrets.token_urlsafe(32)),
-            full_name=full_name,
-            avatar_url=google_avatar,
-            is_active=True,
-            role_id=role_id,
-        )
-        db.add(user)
-        await db.flush()
-        await db.commit()
-        await db.refresh(user)
-    elif google_avatar and str(getattr(user, "avatar_url", "") or "").strip() != google_avatar:
-        user.avatar_url = google_avatar
-        await db.flush()
-        await db.commit()
-        await db.refresh(user)
-
-    if not bool(getattr(user, "is_active", True)):
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="User is inactive")
-
-    if not await is_customer_role(db, getattr(user, "role_id", None)):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="This account is not allowed to use storefront login",
