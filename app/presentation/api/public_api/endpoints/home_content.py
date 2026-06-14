@@ -29,7 +29,7 @@ def _default_home_payload() -> Dict[str, Any]:
         "primary_cta_link": "/products",
         "secondary_cta_text": "",
         "secondary_cta_link": "",
-        "header_brand_name": "Lộc Sang",
+        "header_brand_name": "Yanmar Lộc Sang",
         "header_brand_tagline": "Phụ tùng và nhớt Yanmar chính hãng",
         "header_nav_shop_text": "Cửa hàng",
         "header_nav_new_arrivals_text": "Hàng mới về",
