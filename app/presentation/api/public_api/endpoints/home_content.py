@@ -19,7 +19,7 @@ router = APIRouter(prefix="/home-content", tags=["Public Home Content"])
 def _default_home_payload() -> Dict[str, Any]:
     return {
         "hero_badge": "Yanmar Lộc Sang chính hãng",
-        "hero_title": "Lộc Sang",
+        "hero_title": "Yanmar Lộc Sang",
         "hero_headline_line1": "Phụ tùng & nhớt",
         "hero_headline_line2": "chính hãng Yanmar",
         "hero_subtitle": "Phụ tùng, lọc nhớt, lọc gió và dầu nhớt Yanmar",
@@ -63,7 +63,7 @@ def _default_home_payload() -> Dict[str, Any]:
         "footer_contact_title": "Liên hệ",
         "footer_contact_hotline": "Hotline: 0966 201 140",
         "footer_contact_email": "Email: locsang@cgnn.vn",
-        "footer_copyright_text": "© 2024 Lộc Sang. All rights reserved.",
+        "footer_copyright_text": "© 2026 Lộc Sang. All rights reserved.",
         "hero_feature_1_title": "Chính hãng",
         "hero_feature_1_desc": "Sản phẩm Yanmar nhập và quản lý trực tiếp.",
         "hero_feature_2_title": "Dễ đặt hàng",
