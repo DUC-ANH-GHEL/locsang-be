@@ -6,7 +6,7 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 import cloudinary.uploader
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
-from sqlalchemy import Select, case, delete, func, select, update
+from sqlalchemy import Select, case, delete, func, or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -421,7 +421,7 @@ def _raise_duplicate_integrity_error(exc: IntegrityError) -> None:
 
 
 async def _slug_exists(db: AsyncSession, slug: str, *, exclude_product_id: Optional[int] = None) -> bool:
-    stmt = select(func.count(Product.id)).where(Product.slug == slug)
+    stmt = select(func.count(Product.id)).where(Product.slug == slug, Product.deleted_at.is_(None))
     if exclude_product_id is not None:
         stmt = stmt.where(Product.id != exclude_product_id)
     return (await db.scalar(stmt)) > 0
@@ -430,7 +430,11 @@ async def _slug_exists(db: AsyncSession, slug: str, *, exclude_product_id: Optio
 async def _skus_in_use(db: AsyncSession, skus: Sequence[str], *, exclude_variant_ids: Optional[Sequence[int]] = None) -> List[str]:
     if not skus:
         return []
-    stmt = select(ProductVariant.sku).where(ProductVariant.sku.in_(list(skus)))
+    stmt = (
+        select(ProductVariant.sku)
+        .join(Product, Product.id == ProductVariant.product_id)
+        .where(Product.deleted_at.is_(None), ProductVariant.sku.in_(list(skus)))
+    )
     if exclude_variant_ids:
         stmt = stmt.where(~ProductVariant.id.in_(list(exclude_variant_ids)))
     rows = (await db.execute(stmt)).scalars().all()
@@ -445,11 +449,77 @@ async def _product_skus_in_use(
 ) -> List[str]:
     if not skus:
         return []
-    stmt = select(Product.sku).where(Product.sku.in_(list(skus)))
+    stmt = select(Product.sku).where(Product.deleted_at.is_(None), Product.sku.in_(list(skus)))
     if exclude_product_id is not None:
         stmt = stmt.where(Product.id != exclude_product_id)
     rows = (await db.execute(stmt)).scalars().all()
     return list(set(rows))
+
+
+def _released_deleted_value(value: Optional[str], owner_id: int) -> Optional[str]:
+    raw = str(value or "").strip()
+    if not raw:
+        return value
+    if "__deleted_" in raw:
+        return raw
+    return f"{raw}__deleted_{owner_id}"
+
+
+async def _release_deleted_product_unique_fields(db: AsyncSession, product: Product) -> None:
+    product.slug = _released_deleted_value(product.slug, product.id) or f"deleted-product-{product.id}"
+    product.sku = _released_deleted_value(product.sku, product.id)
+
+    variants = (
+        await db.execute(select(ProductVariant).where(ProductVariant.product_id == product.id))
+    ).scalars().all()
+    for variant in variants:
+        variant.sku = _released_deleted_value(variant.sku, variant.id) or f"deleted-variant-{variant.id}"
+        variant.status = "inactive"
+        variant.is_active = False
+        variant.updated_at = datetime.utcnow()
+
+
+async def _soft_delete_product(db: AsyncSession, product: Product) -> None:
+    product.deleted_at = datetime.utcnow()
+    product.is_active = False
+    product.status = "inactive"
+    product.updated_at = datetime.utcnow()
+    await _release_deleted_product_unique_fields(db, product)
+
+
+async def _release_deleted_unique_conflicts(db: AsyncSession, slug: str, skus: Sequence[str]) -> None:
+    clean_slug = str(slug or "").strip()
+    clean_skus = [str(sku or "").strip() for sku in skus if str(sku or "").strip()]
+
+    product_filters = []
+    if clean_slug:
+        product_filters.append(Product.slug == clean_slug)
+    if clean_skus:
+        product_filters.append(Product.sku.in_(clean_skus))
+
+    released_product_ids: set[int] = set()
+    if product_filters:
+        deleted_products = (
+            await db.execute(
+                select(Product).where(Product.deleted_at.is_not(None), or_(*product_filters))
+            )
+        ).scalars().all()
+        for product in deleted_products:
+            await _release_deleted_product_unique_fields(db, product)
+            released_product_ids.add(product.id)
+
+    if clean_skus:
+        deleted_variant_products = (
+            await db.execute(
+                select(Product)
+                .join(ProductVariant, ProductVariant.product_id == Product.id)
+                .where(Product.deleted_at.is_not(None), ProductVariant.sku.in_(clean_skus))
+            )
+        ).scalars().unique().all()
+        for product in deleted_variant_products:
+            if product.id in released_product_ids:
+                continue
+            await _release_deleted_product_unique_fields(db, product)
 
 
 def _copy_variant_with_id(variant: Any, variant_id: int) -> Any:
@@ -556,13 +626,12 @@ async def admin_bulk_products(
                     raise ValueError("category_id")
                 product.category_id = int(cid)
             elif payload.action == "delete":
-                product.deleted_at = datetime.utcnow()
-                product.is_active = False
-                product.status = "inactive"
+                await _soft_delete_product(db, product)
             else:
                 raise ValueError("action")
 
-            product.updated_at = datetime.utcnow()
+            if payload.action != "delete":
+                product.updated_at = datetime.utcnow()
             updated += 1
         except Exception:
             failed.append({"id": product_id, "reason": "INVALID_DATA"})
@@ -810,10 +879,12 @@ async def admin_create_product(
     try:
         _validate_create_payload(payload)
 
+        skus = [v.sku for v in payload.variants]
+        await _release_deleted_unique_conflicts(db, payload.slug, skus)
+
         if await _slug_exists(db, payload.slug):
             _admin_error(error_code="SLUG_DUPLICATE", message="Slug already exists", status_code=status.HTTP_409_CONFLICT)
 
-        skus = [v.sku for v in payload.variants]
         existing_product_skus = await _product_skus_in_use(db, skus)
         if existing_product_skus:
             _admin_error(
@@ -825,97 +896,92 @@ async def admin_create_product(
         if existing:
             _admin_error(error_code="SKU_DUPLICATE", message=f"SKU already exists: {existing[0]}", status_code=status.HTTP_409_CONFLICT)
 
-        # The uniqueness checks above run SELECT statements, which auto-begin an
-        # AsyncSession transaction. Close that read-only transaction before
-        # opening the explicit write transaction below.
-        if db.in_transaction():
-            await db.rollback()
+        product = Product(
+            name=payload.name,
+            slug=payload.slug,
+            short_description=payload.short_description,
+            description=payload.description,
+            status=payload.status,
+            category_id=payload.category_id,
+            brand=payload.brand,
+            tags=payload.tags,
+            specifications=_normalize_specifications(payload.specifications),
+            has_variants=payload.has_variants,
+            is_active=(payload.status == "active"),
+        )
 
-        async with db.begin():
-            product = Product(
-                name=payload.name,
-                slug=payload.slug,
-                short_description=payload.short_description,
-                description=payload.description,
-                status=payload.status,
-                category_id=payload.category_id,
-                brand=payload.brand,
-                tags=payload.tags,
-                specifications=_normalize_specifications(payload.specifications),
-                has_variants=payload.has_variants,
-                is_active=(payload.status == "active"),
+        product.price = min([v.price for v in payload.variants])
+        sale_prices = [v.sale_price for v in payload.variants if v.sale_price is not None]
+        product.sale_price = min(sale_prices) if sale_prices else None
+        product.sku = payload.variants[0].sku
+        product.stock = sum([v.stock for v in payload.variants])
+
+        db.add(product)
+        await db.flush()
+
+        # Media
+        for m in payload.media:
+            db.add(
+                ProductImage(
+                    product_id=product.id,
+                    url=m.url,
+                    type=m.type,
+                    public_id=m.public_id,
+                    sort_order=m.sort_order,
+                    is_primary=(m.sort_order == 1),
+                )
             )
 
-            product.price = min([v.price for v in payload.variants])
-            sale_prices = [v.sale_price for v in payload.variants if v.sale_price is not None]
-            product.sale_price = min(sale_prices) if sale_prices else None
-            product.sku = payload.variants[0].sku
-            product.stock = sum([v.stock for v in payload.variants])
+        # Attributes + values
+        attribute_by_name: Dict[str, ProductAttribute] = {}
+        value_id_by_pair: Dict[tuple[str, str], int] = {}
 
-            db.add(product)
+        for attr in payload.attributes:
+            a = ProductAttribute(product_id=product.id, name=attr.name)
+            db.add(a)
+            await db.flush()
+            attribute_by_name[attr.name] = a
+
+            for val in attr.values:
+                av = ProductAttributeValue(attribute_id=a.id, value=val)
+                db.add(av)
+                await db.flush()
+                value_id_by_pair[(attr.name, val)] = av.id
+
+        # Variants + variant_attribute_values
+        for v in payload.variants:
+            variant = ProductVariant(
+                product_id=product.id,
+                sku=v.sku,
+                price=v.price,
+                sale_price=v.sale_price,
+                stock=v.stock,
+                manage_stock=v.manage_stock,
+                allow_backorder=v.allow_backorder,
+                status=v.status,
+                is_active=(v.status == "active"),
+                image_url=v.image_url,
+            )
+            db.add(variant)
             await db.flush()
 
-            # Media
-            for m in payload.media:
+            for attr_name, chosen in (v.attribute_values or {}).items():
+                if attr_name not in attribute_by_name:
+                    _admin_error(error_code="ATTRIBUTE_INVALID", message=f"Unknown attribute: {attr_name}")
+                if (attr_name, chosen) not in value_id_by_pair:
+                    _admin_error(error_code="ATTRIBUTE_VALUE_INVALID", message=f"Invalid value for {attr_name}: {chosen}")
+
+                attribute = attribute_by_name[attr_name]
+                attribute_value_id = value_id_by_pair[(attr_name, chosen)]
                 db.add(
-                    ProductImage(
-                        product_id=product.id,
-                        url=m.url,
-                        type=m.type,
-                        public_id=m.public_id,
-                        sort_order=m.sort_order,
-                        is_primary=(m.sort_order == 1),
+                    VariantAttributeValue(
+                        variant_id=variant.id,
+                        attribute_id=attribute.id,
+                        attribute_value_id=attribute_value_id,
                     )
                 )
 
-            # Attributes + values
-            attribute_by_name: Dict[str, ProductAttribute] = {}
-            value_id_by_pair: Dict[tuple[str, str], int] = {}
-
-            for attr in payload.attributes:
-                a = ProductAttribute(product_id=product.id, name=attr.name)
-                db.add(a)
-                await db.flush()
-                attribute_by_name[attr.name] = a
-
-                for val in attr.values:
-                    av = ProductAttributeValue(attribute_id=a.id, value=val)
-                    db.add(av)
-                    await db.flush()
-                    value_id_by_pair[(attr.name, val)] = av.id
-
-            # Variants + variant_attribute_values
-            for v in payload.variants:
-                variant = ProductVariant(
-                    product_id=product.id,
-                    sku=v.sku,
-                    price=v.price,
-                    sale_price=v.sale_price,
-                    stock=v.stock,
-                    manage_stock=v.manage_stock,
-                    allow_backorder=v.allow_backorder,
-                    status=v.status,
-                    is_active=(v.status == "active"),
-                    image_url=v.image_url,
-                )
-                db.add(variant)
-                await db.flush()
-
-                for attr_name, chosen in (v.attribute_values or {}).items():
-                    if attr_name not in attribute_by_name:
-                        _admin_error(error_code="ATTRIBUTE_INVALID", message=f"Unknown attribute: {attr_name}")
-                    if (attr_name, chosen) not in value_id_by_pair:
-                        _admin_error(error_code="ATTRIBUTE_VALUE_INVALID", message=f"Invalid value for {attr_name}: {chosen}")
-
-                    attribute = attribute_by_name[attr_name]
-                    attribute_value_id = value_id_by_pair[(attr_name, chosen)]
-                    db.add(
-                        VariantAttributeValue(
-                            variant_id=variant.id,
-                            attribute_id=attribute.id,
-                            attribute_value_id=attribute_value_id,
-                        )
-                    )
+        await db.commit()
 
         return {
             "success": True,
@@ -942,6 +1008,9 @@ async def admin_update_product(
 ):
     try:
         product = await _get_product_or_404(db, product_id)
+
+        incoming_skus_for_release = [v.sku for v in payload.variants] if payload.variants is not None else []
+        await _release_deleted_unique_conflicts(db, payload.slug or "", incoming_skus_for_release)
 
         if payload.slug and await _slug_exists(db, payload.slug, exclude_product_id=product_id):
             _admin_error(error_code="SLUG_DUPLICATE", message="Slug already exists", status_code=status.HTTP_409_CONFLICT)
@@ -1165,10 +1234,7 @@ async def admin_soft_delete_product(
     current_user: User = Depends(get_current_user),
 ):
     product = await _get_product_or_404(db, product_id)
-    product.deleted_at = datetime.utcnow()
-    product.is_active = False
-    product.status = "inactive"
-    product.updated_at = datetime.utcnow()
+    await _soft_delete_product(db, product)
     await db.commit()
     return {"success": True, "message": "Product deleted successfully"}
 
