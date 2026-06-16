@@ -82,13 +82,11 @@ class UserService(BaseServiceImpl[User, UserCreate, UserUpdate]):
 
         try:
             payload = decode_token(token)
-            print("payload", payload)
             if payload is None:
                 return False
 
             # Check if token is expired
             exp = payload.get("exp")
-            print(exp)
             if exp is None:
                 return False
 

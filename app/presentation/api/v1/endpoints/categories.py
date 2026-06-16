@@ -8,6 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
+from app.core.deps import get_current_user
 from app.application.dto.category import CategoryCreate, CategoryUpdate, CategoryResponse
 from app.domain.models.category import Category
 from app.infrastructure.repositories.category_repository import CategoryRepository
@@ -26,6 +27,7 @@ def _slugify(value: str) -> str:
 @router.post("/", response_model=CategoryResponse, status_code=status.HTTP_201_CREATED)
 async def create_category(
     category: CategoryCreate,
+    current_user = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
     """Create a new category."""
@@ -78,6 +80,7 @@ async def get_category(
 async def update_category(
     category_id: int,
     category: CategoryUpdate,
+    current_user = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
     """Update a category."""
@@ -99,6 +102,7 @@ async def update_category(
 @router.delete("/{category_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_category(
     category_id: int,
+    current_user = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
     """Delete a category."""

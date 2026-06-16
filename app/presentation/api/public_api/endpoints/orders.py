@@ -17,6 +17,7 @@ from app.application.dto.public_order import (
     PublicOrderResponseData,
 )
 from app.core.deps import get_db
+from app.core.rate_limit import rate_limit
 from app.domain.models.order import Order, OrderStatus
 from app.domain.models.order_item import OrderItem
 from app.domain.models.product import Product, ProductVariant, VariantAttributeValue
@@ -114,6 +115,7 @@ def _to_order_response(order: Order) -> PublicOrderResponseData:
 async def create_public_order(
     body: PublicOrderCreateBody,
     background_tasks: BackgroundTasks,
+    _limited: None = Depends(rate_limit("public-checkout", limit=20, window_seconds=300)),
     db: AsyncSession = Depends(get_db),
     current_user: Optional[User] = Depends(get_optional_account_user),
 ):

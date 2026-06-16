@@ -8,6 +8,7 @@ from app.core.role_helpers import is_admin_role
 from app.core.security import create_access_token, verify_password
 from app.core.deps import get_current_user
 from app.core.config import settings
+from app.core.rate_limit import rate_limit
 from app.application.dto.user import UserCreate, UserUpdate, UserResponse, UserLogin, Token
 from app.application.services.user_service import UserService
 from app.infrastructure.repositories.user_repository import UserRepository
@@ -18,17 +19,15 @@ ADMIN_TOKEN_SCOPE = "admin"
 @router.post("/login", response_model=Token)
 async def login(
     login_data: UserLogin,
+    _limited: None = Depends(rate_limit("admin-login", limit=8, window_seconds=60)),
     db: AsyncSession = Depends(get_db)
 ):
     """Login user and return access token."""
-    print("Login data:", login_data)
     user_repository = UserRepository(db)
     user_service = UserService(user_repository)
     user = await user_service.get_by_email(login_data.email)
-    print("User from DB:", user)
 
     if not user:
-        print("Login failed: user not found")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect email or password",
@@ -36,7 +35,6 @@ async def login(
         )
 
     if not verify_password(login_data.password, user.hashed_password):
-        print("Login failed: wrong password")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect email or password",
@@ -59,7 +57,6 @@ async def login(
     access_token = create_access_token(
         data={"sub": str(user.id), "scope": ADMIN_TOKEN_SCOPE}, expires_delta=access_token_expires
     )
-    print("Login success, token:", access_token)
     return {"access_token": access_token, "token_type": "bearer"}
 
 @router.get("/verify-token")
@@ -79,6 +76,7 @@ async def verify_token(
 @router.post("/", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
 async def create_user(
     user: UserCreate,
+    current_user: UserResponse = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
     """Create a new user."""
@@ -107,6 +105,7 @@ async def update_user_me(
 @router.get("/{user_id}", response_model=UserResponse)
 async def read_user(
     user_id: int,
+    current_user: UserResponse = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
     """Get user by ID."""
@@ -124,6 +123,7 @@ async def read_user(
 async def update_user(
     user_id: int,
     user: UserUpdate,
+    current_user: UserResponse = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
     """Update user by ID."""
@@ -140,6 +140,7 @@ async def update_user(
 @router.delete("/{user_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_user(
     user_id: int,
+    current_user: UserResponse = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
     """Delete user by ID."""

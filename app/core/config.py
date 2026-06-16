@@ -14,6 +14,8 @@ class Settings(BaseSettings):
     VERSION: str = "1.0.0"
     API_V1_STR: str = "/api/v1"
     FRONTEND_BASE_URL: str = "https://locsang.shop"
+    ENVIRONMENT: str = "development"
+    VERCEL_ENV: Optional[str] = None
 
     # Security
     SECRET_KEY: str = "your-secret-key-here"  # Change this in production
@@ -21,9 +23,7 @@ class Settings(BaseSettings):
     # Keep admin sessions stable by default (7 days) unless overridden by env.
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 10080
     PASSWORD_RESET_TOKEN_EXPIRE_MINUTES: int = 30
-    # Development-friendly default so forgot-password can complete without email service.
-    # Set to False in production and send reset links via email.
-    AUTH_DEBUG_EXPOSE_PASSWORD_RESET_TOKEN: bool = True
+    AUTH_DEBUG_EXPOSE_PASSWORD_RESET_TOKEN: bool = False
 
     # Database
     # NOTE: Do not hardcode production credentials in source control.
@@ -74,6 +74,19 @@ class Settings(BaseSettings):
     WEB_PUSH_VAPID_PUBLIC_KEY: Optional[str] = None
     WEB_PUSH_VAPID_PRIVATE_KEY: Optional[str] = None
     WEB_PUSH_VAPID_SUBJECT: str = "mailto:admin@locsang.cgnn.vn"
+    def model_post_init(self, __context) -> None:
+        env = str(self.ENVIRONMENT or "").strip().lower()
+        vercel_env = str(self.VERCEL_ENV or "").strip().lower()
+        is_production = env in {"prod", "production"} or vercel_env == "production"
+        if not is_production:
+            return
+
+        weak_secret_values = {"", "your-secret-key-here", "change-me", "secret"}
+        if str(self.SECRET_KEY or "").strip() in weak_secret_values:
+            raise RuntimeError("SECRET_KEY must be set to a strong value in production")
+
+        if bool(self.AUTH_DEBUG_EXPOSE_PASSWORD_RESET_TOKEN):
+            raise RuntimeError("AUTH_DEBUG_EXPOSE_PASSWORD_RESET_TOKEN must be false in production")
 
 settings = Settings()
 

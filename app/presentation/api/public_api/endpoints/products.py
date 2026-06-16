@@ -19,11 +19,12 @@ from app.application.dto.public_product import (
     PublicProductItem,
     UpdateProductBody,
 )
-from app.core.deps import get_db
+from app.core.deps import get_current_user, get_db
 from app.domain.models.category import Category
 from app.domain.models.order import Order
 from app.domain.models.order_item import OrderItem
 from app.domain.models.product import Product, ProductAttribute, ProductImage, ProductVariant, VariantAttributeValue
+from app.domain.models.user import User
 from app.presentation.api.public_api.cache import apply_public_cache
 
 
@@ -803,6 +804,7 @@ async def get_product_detail(
 @router.post("", response_model=ProductDetailResponse, status_code=status.HTTP_201_CREATED)
 async def create_product(
     body: CreateProductBody,
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     category_id = _parse_int_id(body.category_id, "categoryId")
@@ -866,6 +868,7 @@ async def create_product(
 async def update_product(
     id: str,
     body: UpdateProductBody,
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     product_id = _parse_int_id(id, "id")
@@ -927,6 +930,7 @@ async def update_product(
 @router.delete("/{id}", status_code=status.HTTP_200_OK)
 async def soft_delete_product(
     id: str,
+    current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
     product_id = _parse_int_id(id, "id")

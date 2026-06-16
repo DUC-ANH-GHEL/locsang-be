@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.database import get_db
+from app.core.rate_limit import rate_limit
 from app.core.role_helpers import get_or_create_customer_role_id, is_customer_role
 from app.core.security import create_access_token, get_password_hash, verify_password
 from app.domain.models.account_cart_item import AccountCartItem
@@ -265,7 +266,11 @@ async def _verify_facebook_access_token(access_token: str) -> dict:
 
 
 @router.post("/register", response_model=AccountAuthResponse, status_code=status.HTTP_201_CREATED)
-async def register_account(body: AccountRegisterBody, db: AsyncSession = Depends(get_db)):
+async def register_account(
+    body: AccountRegisterBody,
+    _limited: None = Depends(rate_limit("storefront-register", limit=8, window_seconds=300)),
+    db: AsyncSession = Depends(get_db),
+):
     existing = await _get_user_by_email(db, body.email)
     if existing:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Email already registered")
@@ -291,7 +296,11 @@ async def register_account(body: AccountRegisterBody, db: AsyncSession = Depends
 
 
 @router.post("/login", response_model=AccountAuthResponse)
-async def login_account(body: AccountLoginBody, db: AsyncSession = Depends(get_db)):
+async def login_account(
+    body: AccountLoginBody,
+    _limited: None = Depends(rate_limit("storefront-login", limit=12, window_seconds=60)),
+    db: AsyncSession = Depends(get_db),
+):
     user = await _get_user_by_email(db, body.email)
     if not user or not verify_password(body.password, user.hashed_password):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Incorrect email or password")
@@ -313,7 +322,11 @@ async def login_account(body: AccountLoginBody, db: AsyncSession = Depends(get_d
 
 
 @router.post("/facebook", response_model=AccountAuthResponse)
-async def login_account_facebook(body: AccountFacebookLoginBody, db: AsyncSession = Depends(get_db)):
+async def login_account_facebook(
+    body: AccountFacebookLoginBody,
+    _limited: None = Depends(rate_limit("storefront-facebook-login", limit=12, window_seconds=60)),
+    db: AsyncSession = Depends(get_db),
+):
     facebook_payload = await _verify_facebook_access_token(body.access_token)
 
     facebook_user_id = str(facebook_payload.get("id") or "").strip()
@@ -374,6 +387,7 @@ async def login_account_facebook(body: AccountFacebookLoginBody, db: AsyncSessio
 async def forgot_account_password(
     body: AccountForgotPasswordBody,
     background_tasks: BackgroundTasks,
+    _limited: None = Depends(rate_limit("storefront-forgot-password", limit=5, window_seconds=300)),
     db: AsyncSession = Depends(get_db),
 ):
     generic = AccountForgotPasswordResponse(message="Neu email ton tai, ban se nhan duoc huong dan dat lai mat khau.")
@@ -407,6 +421,7 @@ async def forgot_account_password(
 async def reset_account_password(
     body: AccountResetPasswordBody,
     background_tasks: BackgroundTasks,
+    _limited: None = Depends(rate_limit("storefront-reset-password", limit=8, window_seconds=300)),
     db: AsyncSession = Depends(get_db),
 ):
     payload = _decode_password_reset_token(body.token)
@@ -515,43 +530,12 @@ def _order_to_response(order: Order) -> AccountOrderResponse:
     )
 
 
-async def _claim_legacy_guest_orders_by_phone(db: AsyncSession, user: User, receiver_phone: Optional[str]) -> int:
-    normalized_phone = _normalize_phone(receiver_phone)
-    if not normalized_phone:
-        return 0
-
-    stmt = (
-        select(Order)
-        .where(Order.user_id == 0, Order.deleted_at.is_(None))
-        .order_by(Order.id.desc())
-        .limit(300)
-    )
-    guest_orders = (await db.execute(stmt)).scalars().all()
-    if not guest_orders:
-        return 0
-
-    claimed = 0
-    for order in guest_orders:
-        # Fast path: receiver phone is already stored locally when order is created.
-        if _normalize_phone(str(order.receiver_phone or "")) != normalized_phone:
-            continue
-
-        order.user_id = int(user.id)
-        claimed += 1
-
-    if claimed > 0:
-        await db.flush()
-        await db.commit()
-    return claimed
-
-
 @router.get("/orders", response_model=AccountOrdersResponse)
 async def get_my_orders(
     receiver_phone: Optional[str] = Query(default=None, alias="receiverPhone"),
     db: AsyncSession = Depends(get_db),
     current_user: User = Depends(get_current_account_user),
 ):
-    await _claim_legacy_guest_orders_by_phone(db, current_user, receiver_phone)
     stmt = (
         select(Order)
         .where(
