@@ -69,20 +69,27 @@ async def _get_categories_with_products(db: AsyncSession) -> list[dict[str, Any]
 
 async def _get_best_sellers(db: AsyncSession) -> list[dict[str, Any]]:
     sold_count = func.coalesce(func.sum(OrderItem.quantity), 0).label("sold_count")
-    stmt = (
-        select(Product, Category, sold_count)
-        .join(Category, Product.category_id == Category.id)
-        .join(OrderItem, OrderItem.product_id == Product.id)
+    sold_count_subquery = (
+        select(OrderItem.product_id.label("product_id"), sold_count)
         .join(Order, Order.id == OrderItem.order_id)
+        .where(
+            Order.deleted_at.is_(None),
+            Order.status != "cancelled",
+        )
+        .group_by(OrderItem.product_id)
+        .subquery()
+    )
+    product_sold_count = func.coalesce(sold_count_subquery.c.sold_count, 0).label("sold_count")
+    stmt = (
+        select(Product, Category, product_sold_count)
+        .join(Category, Product.category_id == Category.id)
+        .outerjoin(sold_count_subquery, sold_count_subquery.c.product_id == Product.id)
         .options(selectinload(Product.images), selectinload(Product.variants))
         .where(
             Category.is_active.is_(True),
-            Order.deleted_at.is_(None),
-            Order.status != "cancelled",
             *_sellable_product_filters(),
         )
-        .group_by(Product.id, Category.id)
-        .order_by(sold_count.desc(), Product.created_at.desc())
+        .order_by(product_sold_count.desc(), Product.created_at.desc())
         .limit(8)
     )
     return [_dump_product(product, category, sold) for product, category, sold in (await db.execute(stmt)).all()]
