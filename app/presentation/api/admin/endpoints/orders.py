@@ -10,6 +10,7 @@ from sqlalchemy.orm import selectinload
 
 from app.application.dto.admin_order import AdminBulkOrdersBody, AdminOrderUpdateBody
 from app.core.deps import get_current_user, get_db
+from app.domain.models.admin_notification import AdminNotification
 from app.domain.models.order import Order, OrderStatus
 from app.domain.models.order_item import OrderItem
 from app.domain.models.user import User
@@ -82,6 +83,39 @@ def _to_order_detail(order: Order) -> dict:
     return summary
 
 
+async def _mark_order_notifications_read(db: AsyncSession, order_ids: object) -> int:
+    if isinstance(order_ids, (str, int)):
+        raw_ids = [order_ids]
+    else:
+        raw_ids = list(order_ids or [])
+
+    safe_ids_set: set[int] = set()
+    for raw_id in raw_ids:
+        try:
+            order_id = int(raw_id)
+        except (TypeError, ValueError):
+            continue
+        if order_id > 0:
+            safe_ids_set.add(order_id)
+    safe_ids = sorted(safe_ids_set)
+    if not safe_ids:
+        return 0
+
+    stmt = select(AdminNotification).where(
+        AdminNotification.order_id.in_(safe_ids),
+        AdminNotification.read_at.is_(None),
+    )
+    notifications = (await db.execute(stmt)).scalars().all()
+    if not notifications:
+        return 0
+
+    now = datetime.utcnow()
+    for notification in notifications:
+        notification.read_at = now
+        notification.updated_at = now
+    return len(notifications)
+
+
 @router.get("")
 async def admin_list_orders(
     page: int = Query(1, ge=1),
@@ -151,6 +185,9 @@ async def admin_get_order_detail(
     if not order:
         raise HTTPException(status_code=404, detail="Order not found")
 
+    if await _mark_order_notifications_read(db, order_id):
+        await db.commit()
+
     return {"data": _to_order_detail(order)}
 
 
@@ -167,6 +204,7 @@ async def admin_bulk_orders(
     updated = 0
     failed: list[dict] = []
     now = datetime.utcnow()
+    status_updated_order_ids: list[int] = []
 
     stmt = select(Order).where(Order.id.in_(body.ids), Order.deleted_at.is_(None))
     orders = (await db.execute(stmt)).scalars().all()
@@ -182,6 +220,7 @@ async def admin_bulk_orders(
             next_status = _coerce_order_status(body.status)
             order.status = next_status
             order.updated_at = now
+            status_updated_order_ids.append(int(order.id))
             updated += 1
             continue
 
@@ -190,6 +229,9 @@ async def admin_bulk_orders(
         if _normalize_status(order.status) != "cancelled":
             order.status = OrderStatus.CANCELLED.value
         updated += 1
+
+    if status_updated_order_ids:
+        await _mark_order_notifications_read(db, status_updated_order_ids)
 
     await db.commit()
     return {"success": True, "updated": updated, "failed": failed}
@@ -214,6 +256,7 @@ async def admin_update_order(
     if "tracking_code" in payload and payload["tracking_code"] is not None:
         order.tracking_code = str(payload["tracking_code"]).strip() or None
     order.updated_at = datetime.utcnow()
+    await _mark_order_notifications_read(db, order.id)
 
     await db.commit()
     await db.refresh(order)
