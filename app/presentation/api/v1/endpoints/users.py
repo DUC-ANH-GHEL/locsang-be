@@ -53,7 +53,7 @@ async def login(
             detail="This account is not allowed to access admin",
         )
 
-    access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
+    access_token_expires = timedelta(minutes=settings.ADMIN_ACCESS_TOKEN_EXPIRE_MINUTES)
     access_token = create_access_token(
         data={"sub": str(user.id), "scope": ADMIN_TOKEN_SCOPE}, expires_delta=access_token_expires
     )

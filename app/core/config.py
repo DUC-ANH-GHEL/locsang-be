@@ -22,6 +22,8 @@ class Settings(BaseSettings):
     ALGORITHM: str = "HS256"
     # Keep admin sessions stable by default (7 days) unless overridden by env.
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 10080
+    # Admin sessions are intentionally long-lived so admins only log out manually.
+    ADMIN_ACCESS_TOKEN_EXPIRE_MINUTES: int = 5256000
     PASSWORD_RESET_TOKEN_EXPIRE_MINUTES: int = 30
     AUTH_DEBUG_EXPOSE_PASSWORD_RESET_TOKEN: bool = False
 

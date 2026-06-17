@@ -55,6 +55,12 @@ def test_password_reset_token_is_not_exposed_by_default():
     assert Settings().AUTH_DEBUG_EXPOSE_PASSWORD_RESET_TOKEN is False
 
 
+def test_admin_token_lifetime_is_long_but_storefront_default_stays_shorter():
+    settings = Settings()
+    assert settings.ADMIN_ACCESS_TOKEN_EXPIRE_MINUTES >= 5256000
+    assert settings.ACCESS_TOKEN_EXPIRE_MINUTES < settings.ADMIN_ACCESS_TOKEN_EXPIRE_MINUTES
+
+
 def test_production_rejects_placeholder_secret():
     with pytest.raises(RuntimeError):
         Settings(VERCEL_ENV="production", SECRET_KEY="your-secret-key-here")
