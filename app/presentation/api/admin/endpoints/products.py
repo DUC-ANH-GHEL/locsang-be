@@ -75,6 +75,41 @@ def _status_to_is_active(status_str: Optional[str]) -> Optional[bool]:
     return status_str == "active"
 
 
+def _product_status_to_variant_status(status_str: str) -> str:
+    return "active" if status_str == "active" else "inactive"
+
+
+def _variant_status_for_product(product_has_variants: bool, product_status: str, requested_variant_status: str) -> str:
+    if not bool(product_has_variants):
+        return _product_status_to_variant_status(product_status)
+    return requested_variant_status
+
+
+def _should_sync_variant_status(product_has_variants: bool, variant_count: int, status_str: str) -> bool:
+    if status_str != "active":
+        return True
+    return not bool(product_has_variants) or int(variant_count or 0) <= 1
+
+
+async def _sync_product_variant_status(db: AsyncSession, product: Product, status_str: str) -> None:
+    variant_count = int(
+        await db.scalar(select(func.count(ProductVariant.id)).where(ProductVariant.product_id == product.id)) or 0
+    )
+    if not _should_sync_variant_status(bool(product.has_variants), variant_count, status_str):
+        return
+
+    next_status = _product_status_to_variant_status(status_str)
+    await db.execute(
+        update(ProductVariant)
+        .where(ProductVariant.product_id == product.id)
+        .values(
+            status=next_status,
+            is_active=(next_status == "active"),
+            updated_at=datetime.utcnow(),
+        )
+    )
+
+
 async def _refresh_product_aggregates(db: AsyncSession, product_id: int) -> None:
     variants = (await db.execute(select(ProductVariant).where(ProductVariant.product_id == product_id))).scalars().all()
     product = await db.get(Product, product_id)
@@ -620,6 +655,7 @@ async def admin_bulk_products(
                 is_active = _status_to_is_active(st)
                 if is_active is not None:
                     product.is_active = is_active
+                await _sync_product_variant_status(db, product, st)
             elif payload.action == "category":
                 cid = payload.data.get("category_id")
                 if cid is None:
@@ -689,6 +725,7 @@ async def admin_quick_patch_product(
     if payload.status is not None:
         product.status = payload.status
         product.is_active = (payload.status == "active")
+        await _sync_product_variant_status(db, product, payload.status)
     if payload.category_id is not None:
         product.category_id = int(payload.category_id)
 
@@ -950,6 +987,7 @@ async def admin_create_product(
 
         # Variants + variant_attribute_values
         for v in payload.variants:
+            variant_status = _variant_status_for_product(payload.has_variants, payload.status, v.status)
             variant = ProductVariant(
                 product_id=product.id,
                 sku=v.sku,
@@ -958,8 +996,8 @@ async def admin_create_product(
                 stock=v.stock,
                 manage_stock=v.manage_stock,
                 allow_backorder=v.allow_backorder,
-                status=v.status,
-                is_active=(v.status == "active"),
+                status=variant_status,
+                is_active=(variant_status == "active"),
                 image_url=v.image_url,
             )
             db.add(variant)
@@ -1165,8 +1203,9 @@ async def admin_update_product(
                 variant.stock = v.stock
                 variant.manage_stock = v.manage_stock
                 variant.allow_backorder = v.allow_backorder
-                variant.status = v.status
-                variant.is_active = (v.status == "active")
+                variant_status = _variant_status_for_product(product.has_variants, product.status, v.status)
+                variant.status = variant_status
+                variant.is_active = (variant_status == "active")
                 variant.image_url = v.image_url
                 await db.flush()
 
