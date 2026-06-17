@@ -13,7 +13,7 @@ class Settings(BaseSettings):
     PROJECT_NAME: str = "LocSang API"
     VERSION: str = "1.0.0"
     API_V1_STR: str = "/api/v1"
-    FRONTEND_BASE_URL: str = "https://locsang.shop"
+    FRONTEND_BASE_URL: str = "https://locsang.vn"
     ENVIRONMENT: str = "development"
     VERCEL_ENV: Optional[str] = None
 
@@ -36,8 +36,8 @@ class Settings(BaseSettings):
         "http://localhost",
         "http://localhost:3000",
         "http://127.0.0.1:3000",
-        "https://locsang.shop",
-        "https://locsang.cgnn.vn",
+        "https://locsang.vn",
+        "https://www.locsang.vn",
         "https://locsang-fe.vercel.app",
     ]
 
@@ -73,7 +73,7 @@ class Settings(BaseSettings):
     # Generate VAPID keys with pywebpush/py-vapid and set these in deployment env.
     WEB_PUSH_VAPID_PUBLIC_KEY: Optional[str] = None
     WEB_PUSH_VAPID_PRIVATE_KEY: Optional[str] = None
-    WEB_PUSH_VAPID_SUBJECT: str = "mailto:admin@locsang.cgnn.vn"
+    WEB_PUSH_VAPID_SUBJECT: str = "mailto:admin@locsang.vn"
     def model_post_init(self, __context) -> None:
         env = str(self.ENVIRONMENT or "").strip().lower()
         vercel_env = str(self.VERCEL_ENV or "").strip().lower()

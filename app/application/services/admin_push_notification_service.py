@@ -93,7 +93,7 @@ def _send_web_push(subscription_info: dict[str, Any], payload: dict[str, Any]) -
         subscription_info=subscription_info,
         data=json.dumps(payload, ensure_ascii=False),
         vapid_private_key=str(settings.WEB_PUSH_VAPID_PRIVATE_KEY or "").strip(),
-        vapid_claims={"sub": str(settings.WEB_PUSH_VAPID_SUBJECT or "mailto:admin@locsang.cgnn.vn")},
+        vapid_claims={"sub": str(settings.WEB_PUSH_VAPID_SUBJECT or "mailto:admin@locsang.vn")},
     )
 
 

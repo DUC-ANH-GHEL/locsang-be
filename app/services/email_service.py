@@ -29,7 +29,7 @@ def _parse_recipients(val):
     return list(val)
 
 def _resolve_sender_email():
-    return getattr(settings, "SMTP_FROM_EMAIL", "noreply@locsang.shop")
+    return getattr(settings, "SMTP_FROM_EMAIL", "noreply@locsang.vn")
 
 
 def _resolve_admin_contact_recipients() -> list[str]:
@@ -175,7 +175,7 @@ def _build_contact_auto_reply_body(*, name: str, phone: str, message: str, html:
                 </div>
                 <div style='font-size:15px;color:#8a4f41;margin-bottom:18px;'>Cảm ơn bạn đã tin tưởng Lộc Sang!</div>
                 <div style='text-align:center;margin-top:24px;'>
-                    <a href='https://locsang.shop/' style='display:inline-block;padding:12px 32px;background:#8a4f41;color:#fff;text-decoration:none;border-radius:24px;font-weight:700;font-size:16px;'>Truy cập Lộc Sang</a>
+                    <a href='https://locsang.vn/' style='display:inline-block;padding:12px 32px;background:#8a4f41;color:#fff;text-decoration:none;border-radius:24px;font-weight:700;font-size:16px;'>Truy cập Lộc Sang</a>
                 </div>
             </td>
         </tr>
@@ -284,7 +284,7 @@ async def send_password_changed_email(*, recipient_email: str) -> bool:
     clean_email = _clean_text(recipient_email)
     if not clean_email:
         return False
-    frontend_base_url = str(settings.FRONTEND_BASE_URL or "https://locsang.shop").rstrip("/")
+    frontend_base_url = str(settings.FRONTEND_BASE_URL or "https://locsang.vn").rstrip("/")
     return await send_email(
         subject="Lộc Sang - Mat khau da duoc thay doi",
         body_text=_build_password_changed_body(frontend_base_url=frontend_base_url),
@@ -425,7 +425,7 @@ def _build_order_auto_reply_body(
                 <table width='100%' cellpadding='0' cellspacing='0' style='margin-bottom:18px;'>{items_html}</table>
                 <div style='font-size:15px;color:#8a4f41;margin-bottom:18px;'>Cảm ơn bạn đã mua sắm tại Lộc Sang!</div>
                 <div style='text-align:center;margin-top:24px;'>
-                    <a href='https://locsang.shop/' style='display:inline-block;padding:12px 32px;background:#8a4f41;color:#fff;text-decoration:none;border-radius:24px;font-weight:700;font-size:16px;'>Truy cập Lộc Sang</a>
+                    <a href='https://locsang.vn/' style='display:inline-block;padding:12px 32px;background:#8a4f41;color:#fff;text-decoration:none;border-radius:24px;font-weight:700;font-size:16px;'>Truy cập Lộc Sang</a>
                 </div>
             </td>
         </tr>

@@ -66,7 +66,7 @@ Set these environment variables to enable Web Push:
 
 - `WEB_PUSH_VAPID_PUBLIC_KEY=<vapid_public_key>`
 - `WEB_PUSH_VAPID_PRIVATE_KEY=<vapid_private_key>`
-- `WEB_PUSH_VAPID_SUBJECT=mailto:admin@locsang.cgnn.vn`
+- `WEB_PUSH_VAPID_SUBJECT=mailto:admin@locsang.vn`
 
 Notes:
 

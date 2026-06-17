@@ -62,7 +62,7 @@ def _default_home_payload() -> Dict[str, Any]:
         "footer_policy_item_3": "Vận chuyển",
         "footer_contact_title": "Liên hệ",
         "footer_contact_hotline": "Hotline: 0966 201 140",
-        "footer_contact_email": "Email: locsang@cgnn.vn",
+        "footer_contact_email": "Email: locsang@locsang.vn",
         "footer_copyright_text": "© 2026 Lộc Sang. All rights reserved.",
         "hero_feature_1_title": "Chính hãng",
         "hero_feature_1_desc": "Sản phẩm Yanmar nhập và quản lý trực tiếp.",
