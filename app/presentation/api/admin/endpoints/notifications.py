@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel, Field
-from sqlalchemy import func, select
+from sqlalchemy import case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.application.services.admin_push_notification_service import (
@@ -48,6 +48,15 @@ def _notification_to_response(notification: AdminNotification) -> dict:
     }
 
 
+def _notification_ordering():
+    unread_first = case((AdminNotification.read_at.is_(None), 0), else_=1)
+    return (
+        unread_first.asc(),
+        AdminNotification.created_at.desc(),
+        AdminNotification.id.desc(),
+    )
+
+
 @router.get("")
 async def list_admin_notifications(
     limit: int = 20,
@@ -57,7 +66,7 @@ async def list_admin_notifications(
     safe_limit = min(50, max(1, int(limit or 20)))
     stmt = (
         select(AdminNotification)
-        .order_by(AdminNotification.created_at.desc(), AdminNotification.id.desc())
+        .order_by(*_notification_ordering())
         .limit(safe_limit)
     )
     notifications = (await db.execute(stmt)).scalars().all()
