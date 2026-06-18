@@ -582,6 +582,7 @@ async def list_products(
     sortBy: Optional[str] = Query("createdAt"),
     order: Optional[str] = Query("desc"),
     purchasable: Optional[str] = Query("true"),
+    saleOnly: Optional[str] = Query("false"),
     include_total: Optional[str] = Query("true", alias="includeTotal"),
     db: AsyncSession = Depends(get_db),
 ):
@@ -608,6 +609,7 @@ async def list_products(
         if status_q not in ("active", "inactive"):
             raise ValueError("status")
         purchasable_only = str(purchasable or "true").strip().lower() not in ("0", "false", "no", "all")
+        sale_only = str(saleOnly or "false").strip().lower() in ("1", "true", "yes")
         include_total_bool = str(include_total or "true").strip().lower() not in ("0", "false", "no")
 
         category_id = _parse_int_id(categoryId, "categoryId")
@@ -623,6 +625,31 @@ async def list_products(
             filters.append(Product.price >= float(min_price_f))
         if max_price_f is not None:
             filters.append(Product.price <= float(max_price_f))
+        if sale_only:
+            any_variant_exists = select(ProductVariant.id).where(ProductVariant.product_id == Product.id).exists()
+            sale_variant_exists = (
+                select(ProductVariant.id)
+                .where(
+                    ProductVariant.product_id == Product.id,
+                    ProductVariant.is_active.is_(True),
+                    ProductVariant.status == "active",
+                    ProductVariant.sale_price.is_not(None),
+                    ProductVariant.sale_price > 0,
+                    ProductVariant.price > ProductVariant.sale_price,
+                )
+                .exists()
+            )
+            filters.append(
+                or_(
+                    sale_variant_exists,
+                    and_(
+                        ~any_variant_exists,
+                        Product.sale_price.is_not(None),
+                        Product.sale_price > 0,
+                        Product.price > Product.sale_price,
+                    ),
+                )
+            )
 
         filters.append(Product.deleted_at.is_(None))
         filters.append(Product.is_active.is_(True))
